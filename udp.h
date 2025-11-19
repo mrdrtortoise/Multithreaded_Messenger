@@ -8,6 +8,7 @@
 #include <unistd.h>     // close()
 #include <string.h>     // memset(), memcpy()
 #include <assert.h>
+#include <stdlib.h>
 
 #define BUFFER_SIZE 1024
 #define SERVER_PORT 12000

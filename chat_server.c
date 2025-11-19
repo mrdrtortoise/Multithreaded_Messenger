@@ -14,14 +14,12 @@ int main(int argc, char *argv[])
 
     assert(sd > -1);
 
+    printf("Server is listening on port %d\n", SERVER_PORT);
     // Server main loop
     while (1) 
     {
         // Storage for request and response messages
         char client_request[BUFFER_SIZE], server_response[BUFFER_SIZE];
-
-        // Demo code (remove later)
-        printf("Server is listening on port %d\n", SERVER_PORT);
 
         // Variable to store incoming client's IP address and port
         struct sockaddr_in client_address;
@@ -34,9 +32,15 @@ int main(int argc, char *argv[])
         // Successfully received an incoming request
         if (rc > 0)
         {
+            char client_ip[INET_ADDRSTRLEN];
+            inet_ntop(AF_INET, &client_address.sin_addr, client_ip, INET_ADDRSTRLEN);
+            printf("Client IP: %s, Port: %d\n", client_ip, ntohs(client_address.sin_port));
+
             // Demo code (remove later)
             strcpy(server_response, "Hi, the server has received: ");
             strcat(server_response, client_request);
+            strcat(server_response, " IP: ");
+            strcat(server_response, client_ip);
             strcat(server_response, "\n");
 
             // This function writes back to the incoming client,

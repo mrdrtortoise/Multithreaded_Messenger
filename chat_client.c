@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include "udp.h"
 
-#define CLIENT_PORT 10000
+#define CLIENT_PORT 0
 
 // client code
 int main(int argc, char *argv[])
@@ -31,26 +31,33 @@ int main(int argc, char *argv[])
     // Storage for request and response messages
     char client_request[BUFFER_SIZE], server_response[BUFFER_SIZE];
 
-    // Demo code (remove later)
-    strcpy(client_request, "dummy request");
+    while(1){
 
-    // This function writes to the server (sends request)
-    // through the socket at sd.
-    // (See details of the function in udp.h)
-    rc = udp_socket_write(sd, &server_addr, client_request, BUFFER_SIZE);
-
-    if (rc > 0)
-    {
-        // This function reads the response from the server
+        printf("> ");
+        if(fgets(client_request, BUFFER_SIZE, stdin) == NULL){
+            perror("fgets failed");
+            exit(1);
+        }
+    
+        // This function writes to the server (sends request)
         // through the socket at sd.
-        // In our case, responder_addr will simply be
-        // the same as server_addr.
         // (See details of the function in udp.h)
-        int rc = udp_socket_read(sd, &responder_addr, server_response, BUFFER_SIZE);
-
-        // Demo code (remove later)
-        printf("server_response: %s", server_response);
+        rc = udp_socket_write(sd, &server_addr, client_request, BUFFER_SIZE);
+    
+        if (rc > 0)
+        {
+            // This function reads the response from the server
+            // through the socket at sd.
+            // In our case, responder_addr will simply be
+            // the same as server_addr.
+            // (See details of the function in udp.h)
+            int rc = udp_socket_read(sd, &responder_addr, server_response, BUFFER_SIZE);
+    
+            // Demo code (remove later)
+            printf("server_response: %s", server_response);
+        }
     }
+    // Demo code (remove later)
 
     return 0;
 }
