@@ -10,62 +10,62 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
+#include <pthread.h>
 
 #define BUFFER_SIZE 1024
 #define SERVER_PORT 12000
-#define SERVER_BACKLOG 10
+#define SERVER_BACKLOG 5
+#define MAX_CONN_CLIENTS 20
+#define COMMAND_NR 8
+#define CONN 0
+#define SAY 1
+#define SAYTO 2
+#define MUTE 3
+#define UNMUTE 4
+#define RENAME 5
+#define DISCONN 6
+#define KICK 7 //only for admin
 
+struct client;
+typedef struct client client_t;
+
+struct clientNode;
+typedef struct clientNode clientNode_t;
+
+typedef struct clientRead{
+    int clientSocketFD;
+    struct sockaddr_in serverAddress;
+} clientRead_t;
+
+extern clientNode_t *head;
+
+char *commandTypes[COMMAND_NR] = {"conn", "say", "sayto", "mute", "unmute", "rename", "disconn", "kick"};
+
+void check(int retval);
+
+int set_sockdet_addr(struct sockaddr_in *addr, const char *ip, int port);
+
+
+int tcp_socket_open(int port);
+
+///Server Functions
 //wrapper funcitons
-void Listen(int serverSocketFD, int backlog){
-    int result = listen(serverSocketFD, backlog);
-    if(result == 0){
-        printf("Server started listening on port: %d\n", SERVER_PORT);
-    }
-    else{
-        perror("Listen Failed\n");
-    }
-}
-
-void check(int retval){
-    if(retval < 0){
-        fprintf(stderr, "there was an error\n");
-        exit(1);
-    }
-}
-
-int set_sockdet_addr(struct sockaddr_in *addr, const char *ip, int port){
-    memset(addr, 0, sizeof(*addr));
-    addr->sin_family = AF_INET;
-    addr->sin_port = htons(port);
-
-    if(ip == NULL){
-        addr->sin_addr.s_addr = INADDR_ANY;
-    }
-    else{
-        if(inet_pton(AF_INET, ip, &addr->sin_addr) <= 0){
-            return -1;
-        }
-    }
-
-    return 0;
-}
+void Listen(int serverSocketFD, int backlog);
 
 
-int tcp_socket_open(int port){
+void start_accepting_clients(int serverSocketFD);
+client_t * accept_new_client(int serverSocketFD);
 
-    int sd = socket(AF_INET, SOCK_STREAM, 0);
+void spawnClientHandlerThread(client_t *newClient);
+void *clientHandler(void *newClient);
 
-    struct sockaddr_in this_addr;
-    check(set_sockdet_addr(&this_addr, NULL, port));                                                                                    
 
-    int result = bind(sd, (struct sockaddr *)&this_addr, sizeof(this_addr));
-    if(result == 0){
-        printf("Successfully bound sockaddr to socket: %d\n", sd);
-    }
-    else{
-        perror("Binding Failed\n");
-    }
-    
-    return sd;
-}
 
+//launching different possible client commands
+void launchCommand(int commandIdx, char *arg, client_t *client);
+void launchConn(char *arg, client_t *client);
+
+///Client Functions
+void *streamUserInput(void *clientSocketFD);
+void *streamServerOutput(void *clientInfo);
