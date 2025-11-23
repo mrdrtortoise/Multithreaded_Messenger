@@ -2,11 +2,11 @@
 #include <stdlib.h>
 #include "tcp.h"
 
-clientNode_t *head = NULL;
-//use a reader writer lock to allow only one writer in a critical section at a time 
-//but multiple readers can read the linked list at the same time
+// use a reader writer lock to allow only one writer in a critical section at a time
+// but multiple readers can read the linked list at the same time
 
-int main(){
+int main()
+{
     int sd;
     check(sd = tcp_socket_open(SERVER_PORT));
     Listen(sd, SERVER_BACKLOG);
