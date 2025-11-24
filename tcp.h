@@ -17,10 +17,12 @@
 #include <signal.h>
 
 #define BUFFER_SIZE 1024
+#define MAX_WORDCOUNT 64
 #define SERVER_PORT 12000
 #define SERVER_BACKLOG 5
 #define MAX_CONN_CLIENTS 20
 #define MAX_CLIENT_NAME 16
+#define MAX_COMMAND_LEN 10
 #define COMMAND_NR 8
 #define CONN 0
 #define SAY 1
@@ -65,10 +67,10 @@ client_t *accept_new_client(int serverSocketFD);
 void spawnClientHandlerThread(client_t *newClient);
 void *clientHandler(void *newClient);
 
-int parseClientRequest(char parsedClientRequest[], char clientRequest[]);
+int parseClientRequest(int *argc, char arg1[], char arg2[], char clientRequest[]);
 
 // launching different possible client commands
-char *launchCommand(int commandIdx, char *arg, client_t *client);
+char *launchCommand(int commandIdx, char *arg, char *arg2, client_t *client);
 char *launchConn(char *arg, client_t *client);
 char *launchDisconn(client_t *newClient);
 char *launchSay(char *arg, client_t *client_s, client_t *client_r, bool sayTo);
@@ -77,6 +79,6 @@ char *launchSay(char *arg, client_t *client_s, client_t *client_r, bool sayTo);
 void *streamUserInput(void *clientSocketFD);
 void *streamServerOutput(void *clientInfo);
 
-//server list function
+// server list function
 bool inServerList(client_t *client, bool hasLock, bool byClientName, char *name);
 void printServerLL();
