@@ -4,6 +4,7 @@ char *commandTypes[COMMAND_NR] = {"conn", "say", "sayto", "mute", "unmute", "ren
 
 pthread_rwlock_t rwlock = PTHREAD_RWLOCK_INITIALIZER;
 clientNode_t *head = NULL;
+volatile sig_atomic_t running = 1;
 
 typedef struct client
 {
@@ -144,7 +145,7 @@ void spawnClientHandlerThread(client_t *newClient)
 
 void *clientHandler(void *newClient)
 {
-    printf("running clientHandler for newClient\n");
+    printf("\n\nrunning clientHandler for newClient...\n\n");
     client_t *client = (client_t *)newClient;
     char clientRequest[BUFFER_SIZE], arg[BUFFER_SIZE], serverResponse[BUFFER_SIZE];
     char *responseFromCommandLaunch = NULL;
@@ -152,6 +153,7 @@ void *clientHandler(void *newClient)
     ssize_t amount_sent;
     while (1)
     {
+        printServerLL();
         readResult = recv(client->clientSocketFD, clientRequest, BUFFER_SIZE, 0);
 
         if (readResult > 0)
@@ -163,29 +165,27 @@ void *clientHandler(void *newClient)
             if (parseResult > -1)
             {
                 // MUST FREE RESPONSE ONCE DONE USING (MALLOC) -> TODO
+                printf("launching command\n");
                 responseFromCommandLaunch = launchCommand(parseResult, arg, client);
-                if (strcmp(client->client_name, "n/a") == 0)
+                if (inServerList(client, false, false, NULL) && parseResult != 0)
                 {
                     printf("Client name is n/a. Invalid. Must set name\n");
-                    strcpy(serverResponse, "\n>>please set a name before entering chatroom\n\n");
+                    strcpy(serverResponse, "\nSERVER >> please connect to the server first (using conn$ <username>)\n\n");
                     amount_sent = send(client->clientSocketFD, serverResponse, strlen(serverResponse), 0);
                 }
                 else if (responseFromCommandLaunch != NULL)
                 {
-                    /*if (strcmp(responseFromCommandLaunch, "Disconnecting...\n") == 0)
-                    {
-                        free(responseFromCommandLaunch);
-                        continue;
-                        ;
-                    }*/
                     printf("sending response from command launch\n");
                     amount_sent = send(client->clientSocketFD, responseFromCommandLaunch, strlen(responseFromCommandLaunch), 0);
                     free(responseFromCommandLaunch);
+                }else{
+                    strcpy(serverResponse, "\nSERVER >> This Command Does Not Exist.\n\n");
+                    amount_sent = send(client->clientSocketFD, serverResponse, strlen(serverResponse), 0);
                 }
             }
             else
             {
-                strcpy(serverResponse, "\n>>The input was invalid. Command might not exist.\n>>Check syntax (comm$ arg)\n>>except exit comm ('exit')\n\n");
+                strcpy(serverResponse, "\nSERVER >> The input was invalid. Command might not exist.\nSERVER >> Check syntax (comm$ arg)\nSERVER >> except exit comm ('exit')\n\n");
                 amount_sent = send(client->clientSocketFD, serverResponse, strlen(serverResponse), 0);
             }
         }
@@ -196,23 +196,11 @@ void *clientHandler(void *newClient)
             break;
         }
     }
-    /*if (!freeClientFromLL(client))
-    {
-        // the problem with this is that we dont know if the client was connected before and then disconnected
-        // and that is why freeClientFromLL() fails
-        // or is it because it hasnt been added to the linked list but the memory for the client has been allocated.
-        // ig you would have to make a different exit based on if the client types exit or disconn.
-        // or you just delete the exit command altogether.
-        // the client has to connect to the server before being able to disconnect
-        // or does disconnect mean stay in the client handler but just remove from linked list. exit means terminate.
-        // i think the latter is correct.
-        // then dont free the client.
-        // only free the node in the list
-        close(client->clientSocketFD);
-        free(client);
-    }*/
-    freeClientFromLL(client);
+    printf("\n\nattempting to free node containing disconnected client...\n");
+    freeClientNodeFromLL(client);
+    printf("closing clientSocketFD: %d\n", client->clientSocketFD);
     close(client->clientSocketFD);
+    printf("freeing memory of client...\n\n");
     free(client);
 }
 
@@ -223,6 +211,7 @@ int parseClientRequest(char parsedClientRequest[], char clientRequest[])
     bool foundSeperatorToken = false;
     for (i = 0; clientRequest[i] != '\0' && i < n; i++)
     {
+        printf("iterating through clientrequest. i: %d\n", i);
         if (clientRequest[i] == '$')
         {
             foundSeperatorToken = true;
@@ -266,48 +255,84 @@ int parseClientRequest(char parsedClientRequest[], char clientRequest[])
 char *launchCommand(int commandIdx, char *arg, client_t *client)
 {
     char *serverResponse;
-    if (commandIdx == 0)
-    {
-        serverResponse = launchConn(arg, client);
-        return serverResponse;
+    if(inServerList(client, false, false, NULL) == true || (commandIdx == 0)){
+        if (commandIdx == 0)
+        {
+            printf("launching connect function with username: %s\n", arg);
+            serverResponse = launchConn(arg, client);
+            printf("serverResponse from launchConn: %s\n", serverResponse);
+            return serverResponse;
+        }
+        else if(commandIdx == 1){
+            serverResponse = launchSay(arg, client, NULL, false);
+            return serverResponse;
+        }
+        else if(commandIdx == 2){
+            //Implement SayTo. Need to change parsing to allow for this syntax: sayTo$ <rec_name> <msg>
+            //good that I implemented mutual exculsion for names on the system.
+        }
+        else if (commandIdx == 6)
+        {
+            serverResponse = launchDisconn(client);
+            return serverResponse;
+        }
+        else{
+            return NULL;
+        }
     }
-    else if (commandIdx == 6)
-    {
-        serverResponse = launchDisconn(client);
-        return serverResponse;
+    else{
+        char *buffer = malloc(BUFFER_SIZE);
+        strcpy(buffer, "\nSERVER >> Connect To The Server Using 'conn$ <username>' Before Using Other Commands\n\n");
+        return buffer;
     }
-    return NULL;
 }
 
 char *launchConn(char *arg, client_t *newClient)
 {
+    printf("entered launchConn\n");
     // check if client is already connectec
-    pthread_rwlock_rdlock(&rwlock);
-    clientNode_t *curr = head;
     char *buffer = malloc(BUFFER_SIZE);
-    while (curr != NULL)
-    {
-        if ((curr->client->clientAddress.sin_port == newClient->clientAddress.sin_port) &&
-            (curr->client->clientAddress.sin_addr.s_addr == newClient->clientAddress.sin_addr.s_addr))
+    if(arg != NULL){
+        printf("arg is not NULL\n");
+        //trying to get rdlock
+        pthread_rwlock_rdlock(&rwlock);
+        clientNode_t *curr = head;
+        while (curr != NULL)
         {
-            printf("client already exits\n");
-            snprintf(buffer, BUFFER_SIZE, "\n>>You are already conneced to the server with username: %s\n\n", curr->client->client_name);
-            pthread_rwlock_unlock(&rwlock);
-            return buffer;
+            printf("looping inside launchConn\n");
+            if ((curr->client->clientAddress.sin_port == newClient->clientAddress.sin_port) &&
+                (curr->client->clientAddress.sin_addr.s_addr == newClient->clientAddress.sin_addr.s_addr))
+            {
+                printf("client already exits\n");
+                snprintf(buffer, BUFFER_SIZE, "\nSERVER >> You are already conneced to the server with username: %s\n\n", curr->client->client_name);
+                pthread_rwlock_unlock(&rwlock);
+                return buffer;
+            }
+            else if(inServerList(newClient, true, true, arg) == true){
+                printf("client witht this name already exits\n");
+                snprintf(buffer, BUFFER_SIZE, "\nSERVER >> This Username (%s) Is Already Taken By Someone Else. Please Choose Another One \n\n", curr->client->client_name);
+                pthread_rwlock_unlock(&rwlock);
+                return buffer;
+            }
+            curr = curr->next;
         }
-        curr = curr->next;
+        pthread_rwlock_unlock(&rwlock);
+        pthread_rwlock_wrlock(&rwlock);
+        printf("adding a new node to the serverList\n");
+        strncpy(newClient->client_name, arg, MAX_CLIENT_NAME - 1);
+        newClient->client_name[MAX_CLIENT_NAME - 1] = '\0';
+        clientNode_t *newNode = malloc(sizeof(clientNode_t));
+        newNode->client = newClient;
+        newNode->next = head;
+        head = newNode;
+        printf("added to the server successfully\n");
+        snprintf(buffer, BUFFER_SIZE, "\nSERVER >> Successfully connected you to the server with username: %s\n\n", newNode->client->client_name);
+        pthread_rwlock_unlock(&rwlock);
     }
-    pthread_rwlock_unlock(&rwlock);
-    pthread_rwlock_wrlock(&rwlock);
-    strncpy(newClient->client_name, arg, MAX_CLIENT_NAME - 1);
-    newClient->client_name[MAX_CLIENT_NAME - 1] = '\0';
-    clientNode_t *newNode = malloc(sizeof(clientNode_t));
-    newNode->client = newClient;
-    newNode->next = head;
-    head = newNode;
-    printf("added to the server successfully\n");
-    snprintf(buffer, BUFFER_SIZE, "\n>>Successfully connected you to the server with username: %s\n\n", newNode->client->client_name);
-    pthread_rwlock_unlock(&rwlock);
+    else{
+        printf("arg is NULL\n");
+        strcpy(buffer, "Missing name to connect to chatroom with (conn$ <username>)\n");
+    }
     return buffer;
 }
 
@@ -317,9 +342,9 @@ char *launchDisconn(client_t *newClient)
     // check for return value to see what to send to client
     //  check if this client is connected already
     char *buffer = malloc(BUFFER_SIZE);
-    if (freeClientFromLL(newClient))
+    if (freeClientNodeFromLL(newClient))
     {
-        strcpy(buffer, "Disconnecting...\n");
+        strcpy(buffer, "\nDisconnecting...\n\n");
         return buffer;
     }
     else
@@ -329,7 +354,40 @@ char *launchDisconn(client_t *newClient)
     }
 }
 
-bool freeClientFromLL(client_t *rmClient)
+char *launchSay(char *arg, client_t *client_s, client_t *client_r, bool sayTo){
+
+    char msgBroadcast[1042]; // MAX_BUFFER_SIZE + MAX_CLIENT_NAME + 2
+    int i, j;
+    for(j = 0; client_s->client_name[j] != '\0'; j++){
+        msgBroadcast[j] = client_s->client_name[j];
+    }
+    msgBroadcast[j++] = ':';
+    msgBroadcast[j++] = ' ';
+    for(i = 0; arg[i] != '\0'; i++){
+        msgBroadcast[j++] = arg[i];
+    }
+    msgBroadcast[j++] = '\n';
+    msgBroadcast[j++] = '\n';
+    msgBroadcast[j++] = '\0';
+    pthread_rwlock_rdlock(&rwlock);
+    if(sayTo){
+        printf("\n%s is sending an exclusive message to %s\n\n", client_s->client_name, client_r->client_name);
+    }
+    clientNode_t *curr = head;
+    while(curr != NULL){
+        if(curr->client->clientSocketFD != client_s->clientSocketFD){
+                printf("\n%s is being sent a message from %s\n", curr->client->client_name, client_s->client_name);
+                send(curr->client->clientSocketFD, msgBroadcast, strlen(msgBroadcast), 0);
+            }
+        curr = curr->next;
+    }
+    pthread_rwlock_unlock(&rwlock);
+    char *serverResponse = malloc(BUFFER_SIZE);
+    strcpy(serverResponse, "\nSERVER >> broadcasted message to connected clients...\n\n");
+    return serverResponse;
+}
+
+bool freeClientNodeFromLL(client_t *rmClient)
 {
     pthread_rwlock_wrlock(&rwlock);
     clientNode_t *curr = head;
@@ -357,7 +415,7 @@ bool freeClientFromLL(client_t *rmClient)
         {
             prev->next = curr->next;
         }
-        // free the clientNode and the client inside
+        // free
         free(curr);
     }
     else
@@ -373,7 +431,7 @@ void *streamUserInput(void *clientSocketFD)
     printf("started user input stream\n");
     int *sd = (int *)clientSocketFD;
     char client_request[BUFFER_SIZE];
-    while (1)
+    while (running)
     {
         if (fgets(client_request, BUFFER_SIZE, stdin) == NULL)
         {
@@ -385,11 +443,19 @@ void *streamUserInput(void *clientSocketFD)
 
         if (strcmp(client_request, "exit") == 0)
         {
+            running = 0;
             exit(0);
         }
-
-        ssize_t amount_sent = send(*sd, client_request, strlen(client_request), 0);
+        if(running){
+            ssize_t amount_sent = send(*sd, client_request, strlen(client_request), 0);
+            if(amount_sent < 0){
+                perror("send failed");
+                running = 0;
+                break;
+            }
+        }
     }
+    return NULL;
 }
 
 void *streamServerOutput(void *clientSocketFD)
@@ -397,7 +463,7 @@ void *streamServerOutput(void *clientSocketFD)
     printf("started server output stream\n");
     int *sd = (int *)clientSocketFD;
     char serverResponse[BUFFER_SIZE];
-    while (1)
+    while (running)
     {
         int readResult = recv(*sd, serverResponse, BUFFER_SIZE, 0);
         if (readResult > 0)
@@ -408,12 +474,59 @@ void *streamServerOutput(void *clientSocketFD)
         else if (readResult == 0)
         {
             printf("Connection Closed by Peer\n");
+            close(*sd);
+            running = 0;
+            printf("running set to: %d\n", running);
+            break;
         }
         else
         {
             perror("recv failed");
+            close(*sd);
+            running = 0;
             break;
         }
     }
-    close(*sd);
+    return NULL;
+}
+
+void printServerLL(){
+    pthread_rwlock_rdlock(&rwlock);
+    clientNode_t *curr = head;
+    char IPaddr[INET_ADDRSTRLEN];
+    int i = 0;
+    while(curr != NULL){
+        inet_ntop(AF_INET, &curr->client->clientAddress.sin_addr, IPaddr, INET_ADDRSTRLEN);
+        printf("--> |");
+        printf("IP: %s, Port: %u, Name: %s", IPaddr, ntohs(curr->client->clientAddress.sin_port), curr->client->client_name);
+        printf("|\n");
+        curr = curr->next;
+    }
+    printf("--> NULL\n");
+    pthread_rwlock_unlock(&rwlock);
+}
+
+bool inServerList(client_t *client, bool hasLock, bool byClientName, char *name){
+    if(!hasLock){
+        pthread_rwlock_rdlock(&rwlock);
+    }
+    clientNode_t *curr = head;
+    while(curr != NULL){
+        printf("in loop");
+        if(byClientName && (strcmp(curr->client->client_name, name) == 0)){
+            printf("client with the same name was found.\n");
+            if(!hasLock) pthread_rwlock_unlock(&rwlock);
+            return true;
+        }
+        if(!byClientName && (curr->client->clientSocketFD == client->clientSocketFD)){
+            if(!hasLock) pthread_rwlock_unlock(&rwlock);
+            return true;
+        }
+        curr = curr->next;
+    }
+    if(!hasLock){
+        pthread_rwlock_unlock(&rwlock);
+    }
+    printf("client with the same name was not found.\n");
+    return false;
 }

@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <pthread.h>
+#include <signal.h>
 
 #define BUFFER_SIZE 1024
 #define SERVER_PORT 12000
@@ -54,7 +55,7 @@ int tcp_socket_open(int port);
 
 /// Server Functions
 // memory management
-bool freeClientFromLL(client_t *rmClient);
+bool freeClientNodeFromLL(client_t *rmClient);
 // wrapper funcitons
 void Listen(int serverSocketFD, int backlog);
 
@@ -70,7 +71,12 @@ int parseClientRequest(char parsedClientRequest[], char clientRequest[]);
 char *launchCommand(int commandIdx, char *arg, client_t *client);
 char *launchConn(char *arg, client_t *client);
 char *launchDisconn(client_t *newClient);
+char *launchSay(char *arg, client_t *client_s, client_t *client_r, bool sayTo);
 
 /// Client Functions
 void *streamUserInput(void *clientSocketFD);
 void *streamServerOutput(void *clientInfo);
+
+//server list function
+bool inServerList(client_t *client, bool hasLock, bool byClientName, char *name);
+void printServerLL();
