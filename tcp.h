@@ -23,6 +23,7 @@
 #define MAX_CONN_CLIENTS 20
 #define MAX_CLIENT_NAME 16
 #define MAX_COMMAND_LEN 10
+#define MAX_SERVER_RESPONSE 1106
 #define COMMAND_NR 8
 #define CONN 0
 #define SAY 1
@@ -58,6 +59,7 @@ int tcp_socket_open(int port);
 /// Server Functions
 // memory management
 bool freeClientNodeFromLL(client_t *rmClient);
+void freeListOfMutedClients(client_t *client);
 // wrapper funcitons
 void Listen(int serverSocketFD, int backlog);
 
@@ -73,12 +75,15 @@ int parseClientRequest(int *argc, char arg1[], char arg2[], char clientRequest[]
 char *launchCommand(int commandIdx, char *arg, char *arg2, client_t *client);
 char *launchConn(char *arg, client_t *client);
 char *launchDisconn(client_t *newClient);
-char *launchSay(char *arg, client_t *client_s, client_t *client_r, bool sayTo);
+char *launchSay(char *arg, client_t *client_s, char *client_r, bool sayTo);
+char *muteClient(client_t *client, char *nameOfClientToBeMuted, bool hasLock);
 
 /// Client Functions
 void *streamUserInput(void *clientSocketFD);
 void *streamServerOutput(void *clientInfo);
 
 // server list function
+bool isMuted(client_t *client, char *name, bool hasLock);
 bool inServerList(client_t *client, bool hasLock, bool byClientName, char *name);
 void printServerLL();
+void printClientMuted(client_t *client);

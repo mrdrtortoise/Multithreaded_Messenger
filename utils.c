@@ -19,7 +19,7 @@ typedef struct client
 
     // A standard client has the following attributes:
     char client_name[MAX_CLIENT_NAME];
-    char *muted_clients[MAX_CONN_CLIENTS];
+    char *muted_clients[MAX_CONN_CLIENTS+1];
 } client_t;
 
 typedef struct clientNode
@@ -119,7 +119,7 @@ client_t *accept_new_client(int serverSocketFD)
     newClient->clientAddress = clientAddr;
     strncpy(newClient->client_name, "n/a", MAX_CLIENT_NAME);
     newClient->serverSocketFD = serverSocketFD;
-    for (int i = 0; i < MAX_CONN_CLIENTS; i++)
+    for (int i = 0; i < MAX_CONN_CLIENTS+1; i++)
     {
         newClient->muted_clients[i] = NULL;
     }
@@ -155,7 +155,10 @@ void *clientHandler(void *newClient)
     ssize_t amount_sent;
     while (1)
     {
+        printf("Server Linked List\n");
         printServerLL();
+        printf("list of muted clients for: %s\n", client->client_name);
+        printClientMuted(client);
         readResult = recv(client->clientSocketFD, clientRequest, BUFFER_SIZE, 0);
 
         if (readResult > 0)
@@ -169,13 +172,13 @@ void *clientHandler(void *newClient)
                 // MUST FREE RESPONSE ONCE DONE USING (MALLOC) -> TODO
                 printf("launching command\n");
                 responseFromCommandLaunch = launchCommand(parseResult, arg, recClientName, client);
-                if (inServerList(client, false, false, NULL) && parseResult != 0 && client->client_name == NULL)
+                /*if (inServerList(client, false, false, NULL) && parseResult != 0 && client->client_name == NULL)
                 {
                     printf("Client name is n/a. Invalid. Must set name\n");
                     strcpy(serverResponse, "\nSERVER >> please connect to the server first (using conn$ <username>)\n\n");
                     amount_sent = send(client->clientSocketFD, serverResponse, strlen(serverResponse), 0);
-                }
-                else if (responseFromCommandLaunch != NULL)
+                }*/
+                if (responseFromCommandLaunch != NULL)
                 {
                     printf("sending response from command launch\n");
                     amount_sent = send(client->clientSocketFD, responseFromCommandLaunch, strlen(responseFromCommandLaunch), 0);
@@ -211,6 +214,8 @@ void *clientHandler(void *newClient)
     freeClientNodeFromLL(client);
     printf("closing clientSocketFD: %d\n", client->clientSocketFD);
     close(client->clientSocketFD);
+    printf("freeing memory of clients muted list...\n\n");
+    freeListOfMutedClients(client);
     printf("freeing memory of client...\n\n");
     free(client);
 }
@@ -245,30 +250,42 @@ int parseClientRequest(int *argc, char arg[], char sendToClient[], char clientRe
 
     // extracting arg (first element after $ for normal commands and second element after $ for sayTo)
     // extracting recipient (if available)
-    if (strcmp(command, "sayto") != 0)
-    {
-        strcpy(arg, args[1]);
-        for (int i = 2; args[i] != NULL && i < MAX_WORDCOUNT; i++)
+    if((*argc) > 1){
+        if (strcmp(command, "sayto") != 0)
         {
-            strcat(arg, args[i]);
-        }
-        printf("setting arg to: %s\n", arg);
-        sendToClient = NULL;
-    }
-    else
-    {
-        if (inServerList(NULL, false, true, args[1]))
-        {
-            printf("setting arg to: %s\nsetting client recipient to: %s\n", args[2], args[1]);
-            strcpy(arg, args[2]);
-            strcpy(sendToClient, args[1]);
+            strcpy(arg, args[1]);
+            for (int i = 2; args[i] != NULL && i < MAX_WORDCOUNT; i++)
+            {
+                strcat(arg, " ");
+                strcat(arg, args[i]);
+            }
+            printf("setting arg to: %s\n", arg);
+            sendToClient = NULL;
         }
         else
         {
-            strcpy(sendToClient, args[1]);
-            printf("the recipient does not exist\n");
-            return -2;
+            if (inServerList(NULL, false, true, args[1]))
+            {
+                printf("setting arg to: %s\nsetting client recipient to: %s\n", args[2], args[1]);
+                strcpy(sendToClient, args[1]);
+                strcpy(arg, args[2]);
+                for (int i = 3; args[i] != NULL && i < MAX_WORDCOUNT; i++)
+                {
+                    strcat(arg, " ");
+                    strcat(arg, args[i]);
+                }
+            }
+            else
+            {
+                strcpy(sendToClient, args[1]);
+                printf("the recipient does not exist\n");
+                return -2;
+            }
         }
+    }
+    else{
+        arg = NULL;
+        sendToClient = NULL;
     }
     // finding which index in commandTypes the command is
     for (int i = 0; i < COMMAND_NR; i++)
@@ -280,64 +297,16 @@ int parseClientRequest(int *argc, char arg[], char sendToClient[], char clientRe
     }
     printf("Error: command entered by client not found\n");
     return -1;
-
-    /// previous implementation
-    /*int n = strlen(clientRequest), j = 0, i = 0, c = 0;
-    char command[n];
-    bool foundSeperatorToken = false;
-    for (i = 0; clientRequest[i] != '\0' && i < n; i++)
-    {
-        printf("iterating through clientrequest. i: %d\n", i);
-        if (clientRequest[i] == '$')
-        {
-            foundSeperatorToken = true;
-            if (clientRequest[i + 1] == ' ')
-            {
-                i += 2; // skip past that token and the space that follows
-            }
-            else
-            {
-                i++;
-            }
-        }
-        if (!foundSeperatorToken)
-        {
-            command[c++] = clientRequest[i];
-            printf("command[%d]: %c\n", i, command[i]);
-        }
-        else
-        {
-            arg[j++] = clientRequest[i];
-        }
-    }
-    command[c] = '\0';
-    arg[j] = '\0';
-    if (!foundSeperatorToken)
-    {
-        printf("$ char was not found in request\n");
-        return -1;
-    }
-    for (int i = 0; i < COMMAND_NR; i++)
-    {
-        if (strcmp(command, commandTypes[i]) == 0)
-        {
-            return i;
-        }
-    }
-    printf("Error: command entered by client not found\n");
-    return -1;*/
 }
 
-char *launchCommand(int commandIdx, char *arg, char *arg2, client_t *client)
+char *launchCommand(int commandIdx, char *arg, char *client_r, client_t *client)
 {
     char *serverResponse;
     if (inServerList(client, false, false, NULL) == true || (commandIdx == 0))
     {
         if (commandIdx == 0)
         {
-            printf("launching connect function with username: %s\n", arg);
             serverResponse = launchConn(arg, client);
-            printf("serverResponse from launchConn: %s\n", serverResponse);
             return serverResponse;
         }
         else if (commandIdx == 1)
@@ -347,9 +316,12 @@ char *launchCommand(int commandIdx, char *arg, char *arg2, client_t *client)
         }
         else if (commandIdx == 2)
         {
-            // Implement SayTo. Need to change parsing to allow for this syntax: sayTo$ <rec_name> <msg>
-            // good that I implemented mutual exculsion for names on the system.
-            printf("\n\nlaunching sayTo\n\n");
+            serverResponse = launchSay(arg, client, client_r, true);
+            return serverResponse;
+        }
+        else if(commandIdx == 3){
+            serverResponse = muteClient(client, arg, false); //*HAVE TO MAKE FUNCTION TO FREE LIST OF MUTED CLIENTS WHEN SERVER OR CLIENT EXITS*
+            return serverResponse;
         }
         else if (commandIdx == 6)
         {
@@ -439,10 +411,11 @@ char *launchDisconn(client_t *newClient)
     }
 }
 
-char *launchSay(char *arg, client_t *client_s, client_t *client_r, bool sayTo)
+char *launchSay(char *arg, client_t *client_s, char *client_r, bool sayTo)
 {
 
     char msgBroadcast[1042]; // MAX_BUFFER_SIZE + MAX_CLIENT_NAME + 2
+    char DMmessage[MAX_SERVER_RESPONSE]; // msgBroadcast + 1042
     int i, j;
     for (j = 0; client_s->client_name[j] != '\0'; j++)
     {
@@ -458,24 +431,69 @@ char *launchSay(char *arg, client_t *client_s, client_t *client_r, bool sayTo)
     msgBroadcast[j++] = '\n';
     msgBroadcast[j++] = '\0';
     pthread_rwlock_rdlock(&rwlock);
-    if (sayTo)
-    {
-        printf("\n%s is sending an exclusive message to %s\n\n", client_s->client_name, client_r->client_name);
-    }
     clientNode_t *curr = head;
     while (curr != NULL)
     {
         if (curr->client->clientSocketFD != client_s->clientSocketFD)
         {
-            printf("\n%s is being sent a message from %s\n", curr->client->client_name, client_s->client_name);
-            send(curr->client->clientSocketFD, msgBroadcast, strlen(msgBroadcast), 0);
+            if(!sayTo && !isMuted(client_s, curr->client->client_name, true)){
+                printf("\n%s is being sent a message from %s\n", curr->client->client_name, client_s->client_name);
+                snprintf(DMmessage, 64, "\033[3;31m<Group Message message from ~%s>\033[32m\n", client_s->client_name);
+                strcat(DMmessage, msgBroadcast);
+                strcat(DMmessage, "\033[0m\n");
+                send(curr->client->clientSocketFD, DMmessage, strlen(DMmessage), 0);
+            }
+            else{
+                if((strcmp(curr->client->client_name, client_r)) == 0 && (!isMuted(client_s, client_r, true))){
+                    printf("\n%s is sending an exclusive message to %s\n\n", client_s->client_name, client_r);
+                    snprintf(DMmessage, 64, "\033[3;31m<dm message from ~%s>\033[32m\n", client_s->client_name);
+                    strcat(DMmessage, msgBroadcast);
+                    strcat(DMmessage, "\033[0m\n");
+                    send(curr->client->clientSocketFD, DMmessage, strlen(DMmessage), 0);
+                }
+            }
         }
         curr = curr->next;
     }
     pthread_rwlock_unlock(&rwlock);
     char *serverResponse = malloc(BUFFER_SIZE);
-    strcpy(serverResponse, "\nSERVER >> broadcasted message to connected clients...\n\n");
+    if(sayTo){
+        snprintf(serverResponse, BUFFER_SIZE, "\nSERVER >> broadcasted message to %s...\n\n", client_r);
+    }
+    else{
+        strcpy(serverResponse, "\nSERVER >> broadcasted message to connected clients...\n\n");
+    }
     return serverResponse;
+}
+
+char *muteClient(client_t *client, char *nameOfClientToBeMuted, bool hasLock){
+    int i = 0;
+    if(!hasLock) pthread_rwlock_rdlock(&rwlock);
+    char *buffer = malloc(BUFFER_SIZE);
+    bool alreadyPresent = false;
+    if(inServerList(NULL, true, true, nameOfClientToBeMuted)){
+        while(client->muted_clients[i] != NULL && i < MAX_CONN_CLIENTS){
+            if(strcmp(client->muted_clients[i], nameOfClientToBeMuted) == 0){
+                strcpy(buffer, "the person you tried to mute is already muted\n");
+                alreadyPresent = true;
+                break;
+            }
+            i++;
+        }
+        if(i == MAX_CONN_CLIENTS){
+            snprintf(buffer, BUFFER_SIZE, "You Have Reached The Maximum Number Of Muted Clients (%d)\n", MAX_CONN_CLIENTS);
+        }
+        else if(!alreadyPresent){
+            printf("the index of muted_clients where the newly muted user will be stored is: %d\n", i);
+            client->muted_clients[i] = strdup(nameOfClientToBeMuted);
+            snprintf(buffer, BUFFER_SIZE, "you have muted: %s\nentry at location %d of your muted clients list\n", nameOfClientToBeMuted, i);
+        } 
+    }
+    else{
+        strcpy(buffer, "\nSERVER >> The Client That You Want To Mute Does Not Exist\n\n");
+    }
+    if(!hasLock) pthread_rwlock_unlock(&rwlock);
+    return buffer;
 }
 
 bool freeClientNodeFromLL(client_t *rmClient)
@@ -517,6 +535,13 @@ bool freeClientNodeFromLL(client_t *rmClient)
     return isConnected;
 }
 
+void freeListOfMutedClients(client_t *client){
+    for(int i = 0; i < MAX_CONN_CLIENTS; i++){
+        free(client->muted_clients[i]);
+        client->muted_clients[i] = NULL;
+    }
+}
+
 void *streamUserInput(void *clientSocketFD)
 {
     printf("started user input stream\n");
@@ -524,6 +549,7 @@ void *streamUserInput(void *clientSocketFD)
     char client_request[BUFFER_SIZE];
     while (running)
     {
+        printf("\033[3m >\033[0m");
         if (fgets(client_request, BUFFER_SIZE, stdin) == NULL)
         {
             perror("fgets failed");
@@ -555,10 +581,10 @@ void *streamServerOutput(void *clientSocketFD)
 {
     printf("started server output stream\n");
     int *sd = (int *)clientSocketFD;
-    char serverResponse[BUFFER_SIZE];
+    char serverResponse[MAX_SERVER_RESPONSE];
     while (running)
     {
-        int readResult = recv(*sd, serverResponse, BUFFER_SIZE, 0);
+        int readResult = recv(*sd, serverResponse, MAX_SERVER_RESPONSE, 0);
         if (readResult > 0)
         {
             serverResponse[readResult] = '\0';
@@ -583,6 +609,21 @@ void *streamServerOutput(void *clientSocketFD)
     return NULL;
 }
 
+bool isMuted(client_t *client, char *name, bool hasLock){
+    if(!hasLock) pthread_rwlock_rdlock(&rwlock);
+    for(int i = 0; i < MAX_CONN_CLIENTS; i++){
+        printf("checking if muted client[i] is equal to name");
+        if(client->muted_clients[i] != NULL){
+            if(strcmp(client->muted_clients[i], name) == 0){
+                if(!hasLock) pthread_rwlock_unlock(&rwlock);
+                return true;
+            }
+        }
+    }
+    if(!hasLock) pthread_rwlock_unlock(&rwlock);
+    return false;
+}
+
 void printServerLL()
 {
     pthread_rwlock_rdlock(&rwlock);
@@ -599,6 +640,23 @@ void printServerLL()
     }
     printf("--> NULL\n");
     pthread_rwlock_unlock(&rwlock);
+}
+
+void printClientMuted(client_t *client){
+    int i = 0;
+    for(i = 0; i < MAX_CONN_CLIENTS; i++){
+        printf("--> |");
+        if(client->muted_clients[i] != NULL){
+            printf("%s |", client->muted_clients[i]);
+        }
+        else{
+            printf("NULL |");
+        }
+        if(i%5 == 0){
+            printf("\n");
+        }
+    }
+    printf("\n");
 }
 
 bool inServerList(client_t *client, bool hasLock, bool byClientName, char *name)
