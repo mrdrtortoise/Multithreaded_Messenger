@@ -3,8 +3,14 @@
 
 #define CLIENT_PORT 0
 
-int main(){
-    int sd = tcp_socket_open(CLIENT_PORT);
+int main(int argc, char *argv[]){
+    int sd;
+    if(argc > 1){
+        sd = tcp_socket_open(ADMIN_PORT_NUMBER);
+    }
+    else{
+        sd = tcp_socket_open(CLIENT_PORT);
+    }
     int connection_attempts = 0;
     assert(sd > -1);
 
@@ -38,5 +44,6 @@ int main(){
             connection_attempts++;
         }
     }
+    
     return 0;
 }

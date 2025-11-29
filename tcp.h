@@ -18,21 +18,22 @@
 
 #define BUFFER_SIZE 1024
 #define MAX_WORDCOUNT 64
-#define SERVER_PORT 12000
+#define SERVER_PORT 12001
 #define SERVER_BACKLOG 5
 #define MAX_CONN_CLIENTS 20
 #define MAX_CLIENT_NAME 16
 #define MAX_COMMAND_LEN 10
 #define MAX_SERVER_RESPONSE 1106
+#define ADMIN_PORT_NUMBER 2001
 #define COMMAND_NR 8
-#define CONN 0
-#define SAY 1
-#define SAYTO 2
-#define MUTE 3
-#define UNMUTE 4
-#define RENAME 5
-#define DISCONN 6
-#define KICK 7 // only for admin
+#define CONN 0 // done
+#define SAY 1 // done
+#define SAYTO 2 // done
+#define MUTE 3 // done
+#define UNMUTE 4 // done
+#define RENAME 5 // TODO
+#define DISCONN 6 // done
+#define KICK 7 // only for admin TODO
 
 struct client;
 typedef struct client client_t;
@@ -58,8 +59,8 @@ int tcp_socket_open(int port);
 
 /// Server Functions
 // memory management
-bool freeClientNodeFromLL(client_t *rmClient);
-void freeListOfMutedClients(client_t *client);
+bool freeClientNodeFromLL(client_t *rmClient, bool haswrlock);
+void freeListOfMutedClients(client_t *client, bool haswrlock);
 // wrapper funcitons
 void Listen(int serverSocketFD, int backlog);
 
@@ -76,7 +77,10 @@ char *launchCommand(int commandIdx, char *arg, char *arg2, client_t *client);
 char *launchConn(char *arg, client_t *client);
 char *launchDisconn(client_t *newClient);
 char *launchSay(char *arg, client_t *client_s, char *client_r, bool sayTo);
-char *muteClient(client_t *client, char *nameOfClientToBeMuted, bool hasLock);
+char *muteClient(client_t *client, char *nameOfClientToBeMuted);
+char *unmuteClient(client_t *client, char *nameOfClientToBeUnmuted);
+char *renameClient(client_t *client, char *newName);
+char *kickClient(client_t *client, char *nameOfClientToBeKicked);
 
 /// Client Functions
 void *streamUserInput(void *clientSocketFD);
@@ -84,6 +88,7 @@ void *streamServerOutput(void *clientInfo);
 
 // server list function
 bool isMuted(client_t *client, char *name, bool hasLock);
-bool inServerList(client_t *client, bool hasLock, bool byClientName, char *name);
+// finds if client * or clientname is in the serverlist. returns a pointer to the client if found. returns NULL if not found
+client_t *inServerList(client_t *client, bool hasLock, bool byClientName, char *name);
 void printServerLL();
 void printClientMuted(client_t *client);
