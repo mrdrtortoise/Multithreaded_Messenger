@@ -38,7 +38,7 @@ typedef struct groupNode
 {
     char groupName[MAX_GROUP_NAME];
     struct groupNode *nextGroup;
-    struct clientNode *firstClient
+    struct clientNode *firstClient;
 } groupNode_t;
 
 void check(int retval)
@@ -176,7 +176,7 @@ void *clientHandler(void *newClient)
     while (1)
     {
         printf("Server Linked List\n");
-        printServerLL();
+        printServerTree();
         printf("list of muted clients for: %s\n", client->client_name);
         printClientMuted(client);
         readResult = recv(client->clientSocketFD, clientRequest, BUFFER_SIZE, 0);
@@ -378,47 +378,27 @@ char *launchConn(char *arg, client_t *newClient)
         }
         // Phase 1: Read lock for validation
         pthread_rwlock_rdlock(&rwlock);
-        printf("got read lock in launchconn\n");
-
-        // Check if client with same address is already connected
-        // however right now I am only iterating through one branch of the tree. would have to go through all branches. TODO
-        clientNode_t *curr = top->firstClient;
-        while (curr != NULL)
-        {
-            printf("looping inside launchConn\n");
-            if ((curr->client->clientAddress.sin_port == newClient->clientAddress.sin_port) &&
-                (curr->client->clientAddress.sin_addr.s_addr == newClient->clientAddress.sin_addr.s_addr))
-            {
-                printf("client already exits\n");
-                snprintf(buffer, BUFFER_SIZE, "\nSERVER >> You are already conneced to the server with username: %s\n\n", curr->client->client_name);
-                pthread_rwlock_unlock(&rwlock);
-                return buffer;
-            }
-            curr = curr->next;
+        client_t *foundClient = inServerTree(newClient, true, false, NULL);
+        if(foundClient != NULL){ // check if this client is already in the serverTree
+            printf("client already exits\n");
+            snprintf(buffer, BUFFER_SIZE, "\nSERVER >> You are already conneced to the server with username: %s\n\n", foundClient->client_name);
+            pthread_rwlock_unlock(&rwlock);
+            return buffer;
         }
-
-        // Check if username is already taken
-        if (inServerList(NULL, true, true, arg) != NULL)
-        {
+        else if(inServerTree(NULL, true, true, arg) != NULL){ // if this client is not connected yet, check if the name that they are trying to join with is available
             printf("client with this name already exits\n");
             snprintf(buffer, BUFFER_SIZE, "\nSERVER >> This Username (%s) Is Already Taken By Someone Else. Please Choose Another One \n\n", arg);
             pthread_rwlock_unlock(&rwlock);
             return buffer;
+            
         }
 
         // Phase 2: Brief write lock for the actual connection
         pthread_rwlock_unlock(&rwlock);  // Release read lock
-        printf("releasing read lock. aquiring the write lock\n");
-        if(pthread_rwlock_trywrlock(&rwlock) == 0){
-            printf("writelock is available\n");
-        }
-        else{
-            printf("writelock is not available\n");
-        }
         pthread_rwlock_wrlock(&rwlock);  // Acquire write lock
-
         // Re-validate that username is still available (state might have changed)
-        if (inServerList(NULL, true, true, arg) != NULL)
+        foundClient = inServerTree(newClient, true, false, NULL);
+        if (foundClient != NULL)
         {
             // Username taken by another client during the brief window
             strcpy(buffer, "\nSERVER >> Username taken by another client. Please choose a different name.\n\n");
@@ -426,14 +406,19 @@ char *launchConn(char *arg, client_t *newClient)
             return buffer;
         }
 
-        printf("adding a new node to the serverList\n");
+        printf("adding a new node to the main group\n");
         strncpy(newClient->client_name, arg, MAX_CLIENT_NAME - 1);
         newClient->client_name[MAX_CLIENT_NAME - 1] = '\0';
         clientNode_t *newNode = malloc(sizeof(clientNode_t));
         newNode->client = newClient;
+        // iterate throught the GroupNodes until you find the main group/reception
+        groupNode_t *currGroupNode = top;
+        while(currGroupNode != NULL && strcmp(currGroupNode->groupName, "main") != 0){
+            currGroupNode = currGroupNode->nextGroup;
+        }
         // this is ok. as I want all clients to first connect to the main group before they can join/ create other groups
-        newNode->next = top->firstClient;
-        top->firstClient = newNode;
+        newNode->next = currGroupNode->firstClient;
+        currGroupNode->firstClient = newNode;
         printf("added to the server successfully\n");
         snprintf(buffer, BUFFER_SIZE, "\nSERVER >> Successfully connected you to the server with username: %s\n\n", newNode->client->client_name);
         pthread_rwlock_unlock(&rwlock);
@@ -833,21 +818,26 @@ bool isMuted(client_t *client, char *name, bool hasLock){
 }
 
 // CONCURRENCY CHECKED
-void printServerLL()
+void printServerTree()
 {
     pthread_rwlock_rdlock(&rwlock);
-    clientNode_t *curr = head;
+    groupNode_t *currGroupNode = top;
+    clientNode_t *curr;
     char IPaddr[INET_ADDRSTRLEN];
-    int i = 0;
-    while (curr != NULL)
-    {
-        inet_ntop(AF_INET, &curr->client->clientAddress.sin_addr, IPaddr, INET_ADDRSTRLEN);
-        printf("--> |");
-        printf("IP: %s, Port: %u, Name: %s", IPaddr, ntohs(curr->client->clientAddress.sin_port), curr->client->client_name);
-        printf("|\n");
-        curr = curr->next;
+    while(currGroupNode != NULL){
+        printf("GROUP: %s\n", currGroupNode->groupName);
+        curr = currGroupNode->firstClient;
+        while (curr != NULL)
+        {
+            inet_ntop(AF_INET, &curr->client->clientAddress.sin_addr, IPaddr, INET_ADDRSTRLEN);
+            printf("--> |");
+            printf("IP: %s, Port: %u, Name: %s", IPaddr, ntohs(curr->client->clientAddress.sin_port), curr->client->client_name);
+            printf("|\n");
+            curr = curr->next;
+        }
+        printf("--> NULL\n");
+        currGroupNode = currGroupNode->nextGroup;
     }
-    printf("--> NULL\n");
     pthread_rwlock_unlock(&rwlock);
 }
 
@@ -891,6 +881,36 @@ client_t *inServerList(client_t *client, bool hasLock, bool byClientName, char *
             return curr->client;
         }
         curr = curr->next;
+    }
+    if (!hasLock) pthread_rwlock_unlock(&rwlock);
+    printf("client with the same name was not found.\n");
+    return NULL;
+}
+
+client_t *inServerTree(client_t *client, bool hasLock, bool byClientName, char *name)
+{
+    if (!hasLock) pthread_rwlock_rdlock(&rwlock);
+
+    groupNode_t *currGroup = top;
+    clientNode_t *curr;
+    while(currGroup != NULL){
+        curr = currGroup->firstClient;
+        while (curr != NULL)
+        {
+            if (byClientName && (strcmp(curr->client->client_name, name) == 0))
+            {
+                printf("client with the same name was found in group: %s\n", currGroup->groupName);
+                if (!hasLock) pthread_rwlock_unlock(&rwlock);
+                return curr->client;
+            }
+            if (!byClientName && (curr->client->clientSocketFD == client->clientSocketFD))
+            {
+                if (!hasLock) pthread_rwlock_unlock(&rwlock);
+                return curr->client;
+            }
+            curr = curr->next;
+        }
+        currGroup = currGroup->nextGroup;
     }
     if (!hasLock) pthread_rwlock_unlock(&rwlock);
     printf("client with the same name was not found.\n");

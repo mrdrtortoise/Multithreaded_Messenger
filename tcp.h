@@ -18,7 +18,7 @@
 
 #define BUFFER_SIZE 1024
 #define MAX_WORDCOUNT 64
-#define SERVER_PORT 12001
+#define SERVER_PORT 12000
 #define SERVER_BACKLOG 5
 #define MAX_CONN_CLIENTS 20
 #define MAX_CLIENT_NAME 16
@@ -88,5 +88,6 @@ void *streamServerOutput(void *clientInfo);
 bool isMuted(client_t *client, char *name, bool hasLock);
 // finds if client * or clientname is in the serverlist. returns a pointer to the client if found. returns NULL if not found
 client_t *inServerList(client_t *client, bool hasLock, bool byClientName, char *name);
-void printServerLL();
+client_t *inServerTree(client_t *client, bool hasLock, bool byClientName, char *name);
+void printServerTree();
 void printClientMuted(client_t *client);
