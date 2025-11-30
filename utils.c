@@ -3,6 +3,7 @@
 char *commandTypes[COMMAND_NR] = {"conn", "say", "sayto", "mute", "unmute", "rename", "disconn", "kick"};
 
 pthread_rwlock_t rwlock = PTHREAD_RWLOCK_INITIALIZER;
+groupNode_t *top = NULL;
 clientNode_t *head = NULL;
 volatile sig_atomic_t running = 1;
 
@@ -27,6 +28,18 @@ typedef struct clientNode
     client_t *client;
     struct clientNode *next;
 } clientNode_t;
+
+// groupNode structure will serve as the top nodes of each group. from each of these nodes there will be a "linked list"
+// of client nodes that represent all the clients that are part of that group.
+// will have to implement funcitons like "listgroups$", "join$ <groupname>"
+// sayto should be able to say to any person on the server.
+// say will broadcast locally within a group.
+typedef struct groupNode
+{
+    char groupName[MAX_GROUP_NAME];
+    struct groupNode *nextGroup;
+    struct clientNode *firstClient
+} groupNode_t;
 
 void check(int retval)
 {
@@ -94,6 +107,13 @@ int tcp_socket_open(int port)
 
 void start_accepting_clients(int serverSocketFD)
 {
+    // use writer lock to modify shared top pointer
+    pthread_rwlock_wrlock(&rwlock);
+    groupNode_t *mainGroup = malloc(sizeof(groupNode_t));
+    strcpy(mainGroup->groupName, "main");
+    mainGroup->nextGroup = NULL;
+    top = mainGroup;
+    pthread_rwlock_unlock(&rwlock);
     while (1)
     {
         client_t *newClient = accept_new_client(serverSocketFD);
@@ -361,7 +381,8 @@ char *launchConn(char *arg, client_t *newClient)
         printf("got read lock in launchconn\n");
 
         // Check if client with same address is already connected
-        clientNode_t *curr = head;
+        // however right now I am only iterating through one branch of the tree. would have to go through all branches. TODO
+        clientNode_t *curr = top->firstClient;
         while (curr != NULL)
         {
             printf("looping inside launchConn\n");
@@ -410,8 +431,9 @@ char *launchConn(char *arg, client_t *newClient)
         newClient->client_name[MAX_CLIENT_NAME - 1] = '\0';
         clientNode_t *newNode = malloc(sizeof(clientNode_t));
         newNode->client = newClient;
-        newNode->next = head;
-        head = newNode;
+        // this is ok. as I want all clients to first connect to the main group before they can join/ create other groups
+        newNode->next = top->firstClient;
+        top->firstClient = newNode;
         printf("added to the server successfully\n");
         snprintf(buffer, BUFFER_SIZE, "\nSERVER >> Successfully connected you to the server with username: %s\n\n", newNode->client->client_name);
         pthread_rwlock_unlock(&rwlock);
@@ -485,6 +507,9 @@ char *launchSay(char *arg, client_t *client_s, char *client_r, bool sayTo)
     msgBroadcast[j++] = '\0';
 
     client_t *recipientClientStruct = NULL; // initialize the pointer that will be used to check if client_s is muted in the recieving clients muted clients list
+    // first you have to find the branch of the server the client is in right now (aka which group)
+
+
     clientNode_t *curr = head; // retrieve the start of the server's linked list
     while (curr != NULL)
     {

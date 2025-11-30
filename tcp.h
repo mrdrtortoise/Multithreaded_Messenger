@@ -24,7 +24,8 @@
 #define MAX_CLIENT_NAME 16
 #define MAX_COMMAND_LEN 10
 #define MAX_SERVER_RESPONSE 1106
-#define ADMIN_PORT_NUMBER 2001
+#define MAX_GROUP_NAME 64
+#define ADMIN_PORT_NUMBER 2000
 #define COMMAND_NR 8
 #define CONN 0 // done
 #define SAY 1 // done
@@ -41,11 +42,8 @@ typedef struct client client_t;
 struct clientNode;
 typedef struct clientNode clientNode_t;
 
-typedef struct clientRead
-{
-    int clientSocketFD;
-    struct sockaddr_in serverAddress;
-} clientRead_t;
+struct groupNode;
+typedef struct groupNode groupNode_t;
 
 extern clientNode_t *head;
 
