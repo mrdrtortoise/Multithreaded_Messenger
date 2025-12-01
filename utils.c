@@ -3,7 +3,7 @@
 char *commandTypes[COMMAND_NR] = {"conn", "say", "sayto", "mute", "unmute", "rename", "disconn", "kick"};
 
 pthread_rwlock_t rwlock = PTHREAD_RWLOCK_INITIALIZER;
-groupNode_t *top = NULL;
+//groupNode_t *top = NULL;
 clientNode_t *head = NULL;
 volatile sig_atomic_t running = 1;
 
@@ -38,7 +38,7 @@ typedef struct groupNode
 {
     char groupName[MAX_GROUP_NAME];
     struct groupNode *nextGroup;
-    struct clientNode *firstClient
+    struct clientNode *firstClient;
 } groupNode_t;
 
 void check(int retval)
@@ -108,12 +108,12 @@ int tcp_socket_open(int port)
 void start_accepting_clients(int serverSocketFD)
 {
     // use writer lock to modify shared top pointer
-    pthread_rwlock_wrlock(&rwlock);
+    /*pthread_rwlock_wrlock(&rwlock);
     groupNode_t *mainGroup = malloc(sizeof(groupNode_t));
     strcpy(mainGroup->groupName, "main");
     mainGroup->nextGroup = NULL;
     top = mainGroup;
-    pthread_rwlock_unlock(&rwlock);
+    pthread_rwlock_unlock(&rwlock);*/
     while (1)
     {
         client_t *newClient = accept_new_client(serverSocketFD);
@@ -382,7 +382,7 @@ char *launchConn(char *arg, client_t *newClient)
 
         // Check if client with same address is already connected
         // however right now I am only iterating through one branch of the tree. would have to go through all branches. TODO
-        clientNode_t *curr = top->firstClient;
+        clientNode_t *curr = head;
         while (curr != NULL)
         {
             printf("looping inside launchConn\n");
@@ -431,9 +431,8 @@ char *launchConn(char *arg, client_t *newClient)
         newClient->client_name[MAX_CLIENT_NAME - 1] = '\0';
         clientNode_t *newNode = malloc(sizeof(clientNode_t));
         newNode->client = newClient;
-        // this is ok. as I want all clients to first connect to the main group before they can join/ create other groups
-        newNode->next = top->firstClient;
-        top->firstClient = newNode;
+        newNode->next = head;
+        head = newNode;
         printf("added to the server successfully\n");
         snprintf(buffer, BUFFER_SIZE, "\nSERVER >> Successfully connected you to the server with username: %s\n\n", newNode->client->client_name);
         pthread_rwlock_unlock(&rwlock);

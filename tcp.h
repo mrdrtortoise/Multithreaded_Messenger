@@ -15,6 +15,7 @@
 #include <stdbool.h>
 #include <pthread.h>
 #include <signal.h>
+#include <ncurses.h>
 
 #define BUFFER_SIZE 1024
 #define MAX_WORDCOUNT 64
@@ -26,6 +27,7 @@
 #define MAX_SERVER_RESPONSE 1106
 #define MAX_GROUP_NAME 64
 #define ADMIN_PORT_NUMBER 2000
+#define CLIENT_PORT 0
 #define COMMAND_NR 8
 #define CONN 0 // done
 #define SAY 1 // done
@@ -44,6 +46,13 @@ typedef struct clientNode clientNode_t;
 
 struct groupNode;
 typedef struct groupNode groupNode_t;
+
+typedef struct threadArgs{
+    WINDOW *inputWindow;
+    WINDOW *outputWindow;
+    WINDOW *debugWindow;
+    int sd;
+} threadArgs_t;
 
 extern clientNode_t *head;
 
