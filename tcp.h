@@ -29,14 +29,14 @@
 #define ADMIN_PORT_NUMBER 2000
 #define CLIENT_PORT 0
 #define COMMAND_NR 8
-#define CONN 0 // done
-#define SAY 1 // done
-#define SAYTO 2 // done
-#define MUTE 3 // done
-#define UNMUTE 4 // done
-#define RENAME 5 // TODO
+#define CONN 0    // done
+#define SAY 1     // done
+#define SAYTO 2   // done
+#define MUTE 3    // done
+#define UNMUTE 4  // done
+#define RENAME 5  // TODO
 #define DISCONN 6 // done
-#define KICK 7 // only for admin TODO
+#define KICK 7    // only for admin TODO
 
 struct client;
 typedef struct client client_t;
@@ -47,7 +47,8 @@ typedef struct clientNode clientNode_t;
 struct groupNode;
 typedef struct groupNode groupNode_t;
 
-typedef struct threadArgs{
+typedef struct threadArgs
+{
     WINDOW *inputWindow;
     WINDOW *outputWindow;
     WINDOW *debugWindow;
@@ -62,7 +63,7 @@ void check(int retval);
 
 int set_sockdet_addr(struct sockaddr_in *addr, const char *ip, int port);
 
-int tcp_socket_open(int port);
+int tcp_socket_open(int port, WINDOW *outputWin);
 
 /// Server Functions
 // memory management
@@ -99,3 +100,6 @@ bool isMuted(client_t *client, char *name, bool hasLock);
 client_t *inServerList(client_t *client, bool hasLock, bool byClientName, char *name);
 void printServerLL();
 void printClientMuted(client_t *client);
+
+// gui functions
+void printToWindow(WINDOW *win, char *buffer);

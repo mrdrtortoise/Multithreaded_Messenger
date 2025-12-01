@@ -8,7 +8,7 @@
 int main()
 {
     int sd;
-    check(sd = tcp_socket_open(SERVER_PORT));
+    check(sd = tcp_socket_open(SERVER_PORT, NULL));
     Listen(sd, SERVER_BACKLOG);
 
     start_accepting_clients(sd);

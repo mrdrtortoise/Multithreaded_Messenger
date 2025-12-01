@@ -2,6 +2,7 @@
 
 #define INPUT_Y_DIVIDER 6
 #define INPUT_X_MULTIPLIER 0.75
+#define DEBUG_Y_DIVIDER 4
 
 int main(int argc, char *argv[])
 {
@@ -28,42 +29,32 @@ int main(int argc, char *argv[])
     getmaxyx(outputWindow, max_output_y, max_output_x);
 
     int max_debug_x, max_debug_y;
-    WINDOW *debugWindow = newwin(max_y - max_input_y, max_x - max_output_x - 1, 1, max_output_x + 1);
-    scrollok(debugWindow, true);
+    WINDOW *debugWindow = newwin(max_y / DEBUG_Y_DIVIDER, max_x - max_output_x - 1, 1, max_output_x + 1);
     box(debugWindow, 0, 0);
     mvwprintw(debugWindow, 0, 1, "Debug Window");
+    wmove(debugWindow, 1, 1);
     wrefresh(debugWindow);
+    WINDOW *debugContent = derwin(debugWindow, (max_y / DEBUG_Y_DIVIDER) - 2, max_x - max_output_x - 3, 1, 1);
+    scrollok(debugContent, true);
+    wrefresh(debugContent);
     getmaxyx(debugWindow, max_debug_y, max_debug_x);
 
     wmove(inputWindow, (max_input_y / 2), 1);
     wprintw(inputWindow, "> ");
     wrefresh(inputWindow);
 
-    char buffer[BUFFER_SIZE];
-    while (1)
-    {
-        mvwgetnstr(inputWindow, max_input_y / 2, 3, buffer, BUFFER_SIZE);
-        wmove(inputWindow, max_input_y / 2, 3);
-        for (int i = 0; i < strlen(buffer); i++)
-        {
-            waddch(inputWindow, ' ');
-        }
-        if (strcmp(buffer, "exit") == 0)
-        {
-            endwin();
-            exit(0);
-        }
-    }
-
     int sd;
     if (argc > 1)
     {
-        sd = tcp_socket_open(ADMIN_PORT_NUMBER);
+        sd = tcp_socket_open(ADMIN_PORT_NUMBER, debugContent);
     }
     else
     {
-        sd = tcp_socket_open(CLIENT_PORT);
+        sd = tcp_socket_open(CLIENT_PORT, debugContent);
     }
+    char buffer[BUFFER_SIZE];
+    char retry;
+    bool retryBool = true;
     int connection_attempts = 0;
     assert(sd > -1);
 
@@ -71,17 +62,19 @@ int main(int argc, char *argv[])
     set_sockdet_addr(&server_addr, "127.0.0.1", SERVER_PORT);
 
     threadArgs_t *tArgs = malloc(sizeof(threadArgs_t));
-    tArgs->debugWindow = debugWindow;
+    tArgs->debugWindow = debugContent;
     tArgs->inputWindow = inputWindow;
     tArgs->outputWindow = outputWindow;
     tArgs->sd = sd;
-
-    while (connection_attempts < 5)
+    while (retryBool)
     {
         int result = connect(sd, (struct sockaddr *)&server_addr, sizeof(server_addr));
         if (result >= 0)
         {
-            printf("\nconnection was successfull\n");
+            memset(buffer, 0, sizeof(buffer));
+            snprintf(buffer, BUFFER_SIZE, "connection was successfull");
+            printToWindow(debugContent, buffer);
+
             connection_attempts = 0;
             char client_request[BUFFER_SIZE], server_response[BUFFER_SIZE];
             pthread_t sendThread, recThread;
@@ -94,18 +87,18 @@ int main(int argc, char *argv[])
         }
         else
         {
-            if (connection_attempts == 0)
+            memset(buffer, 0, sizeof(buffer));
+            snprintf(buffer, BUFFER_SIZE, "connection was unsuccessfull. press 'r' to try again");
+            printToWindow(debugContent, buffer);
+            retry = getch();
+            if (retry == 'r')
             {
-                printf("Could Not Connect To Server...\n");
-                printf("Trying again in...\n");
+                retryBool = true;
             }
-            for (int i = 5; i >= 0; i--)
+            else
             {
-                printf("\rAttempt[%d] %d", connection_attempts, i);
-                fflush(stdout);
-                sleep(1);
+                retryBool = false;
             }
-            connection_attempts++;
         }
     }
     endwin();
