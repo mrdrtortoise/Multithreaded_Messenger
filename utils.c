@@ -555,9 +555,8 @@ char *launchSay(char *arg, client_t *client_s, char *client_r, bool sayTo)
             if (!sayTo && !isMuted(curr->client, client_s->client_name, true))
             { // first check if it is broadcast or dm. Also check if client_s is muted for currClient
                 printf("\n%s is being sent a message from %s\n", curr->client->client_name, client_s->client_name);
-                snprintf(DMmessage, 64, "\033[3;31m<Group Message message from ~%s>\033[32m\n", client_s->client_name);
+                snprintf(DMmessage, 64, "<Group Message message from ~%s>\n", client_s->client_name);
                 strcat(DMmessage, msgBroadcast);
-                strcat(DMmessage, "\033[0m\n");
                 send(curr->client->clientSocketFD, DMmessage, strlen(DMmessage), 0);
             }
             else if (sayTo)
@@ -569,9 +568,8 @@ char *launchSay(char *arg, client_t *client_s, char *client_r, bool sayTo)
                     if ((strcmp(curr->client->client_name, client_r)) == 0 && (!isMuted(recipientClientStruct, client_s->client_name, true)))
                     {
                         printf("\n%s is sending an exclusive message to %s\n\n", client_s->client_name, client_r);
-                        snprintf(DMmessage, 64, "\033[3;31m<dm message from ~%s>\033[32m\n", client_s->client_name);
+                        snprintf(DMmessage, 64, "<dm message from ~%s>\n", client_s->client_name);
                         strcat(DMmessage, msgBroadcast);
-                        strcat(DMmessage, "\033[0m\n");
                         send(curr->client->clientSocketFD, DMmessage, strlen(DMmessage), 0);
                     }
                 }
