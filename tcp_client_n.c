@@ -2,7 +2,7 @@
 
 #define INPUT_Y_DIVIDER 6
 #define INPUT_X_MULTIPLIER 0.75
-#define DEBUG_Y_DIVIDER 4
+#define DEBUG_Y_DIVIDER 2
 
 int main(int argc, char *argv[])
 {
@@ -16,16 +16,19 @@ int main(int argc, char *argv[])
     int max_input_x, max_input_y;
     WINDOW *inputWindow = newwin(max_y / INPUT_Y_DIVIDER, max_x * INPUT_X_MULTIPLIER, max_y - (max_y / INPUT_Y_DIVIDER), 0);
     box(inputWindow, 0, 0);
+    keypad(inputWindow, true);
     mvwprintw(inputWindow, 0, 1, "Input Window");
     wrefresh(inputWindow);
     getmaxyx(inputWindow, max_input_y, max_input_x);
 
     int max_output_x, max_output_y;
     WINDOW *outputWindow = newwin(max_y - (max_y / INPUT_Y_DIVIDER) - 1, max_x * INPUT_X_MULTIPLIER, 1, 0);
-    scrollok(outputWindow, true);
     box(outputWindow, 0, 0);
     mvwprintw(outputWindow, 0, 1, "Output Window");
     wrefresh(outputWindow);
+    WINDOW *outputContent = derwin(outputWindow, max_y - (max_y / INPUT_Y_DIVIDER) - 3, max_x * INPUT_X_MULTIPLIER - 2, 1, 1);
+    scrollok(outputContent, true);
+    wrefresh(outputContent);
     getmaxyx(outputWindow, max_output_y, max_output_x);
 
     int max_debug_x, max_debug_y;
@@ -37,7 +40,7 @@ int main(int argc, char *argv[])
     WINDOW *debugContent = derwin(debugWindow, (max_y / DEBUG_Y_DIVIDER) - 2, max_x - max_output_x - 3, 1, 1);
     scrollok(debugContent, true);
     wrefresh(debugContent);
-    getmaxyx(debugWindow, max_debug_y, max_debug_x);
+    getmaxyx(debugContent, max_debug_y, max_debug_x);
 
     wmove(inputWindow, (max_input_y / 2), 1);
     wprintw(inputWindow, "> ");
@@ -55,6 +58,7 @@ int main(int argc, char *argv[])
     char buffer[BUFFER_SIZE];
     char retry;
     bool retryBool = true;
+    int curr_x, curr_y;
     int connection_attempts = 0;
     assert(sd > -1);
 
@@ -64,7 +68,7 @@ int main(int argc, char *argv[])
     threadArgs_t *tArgs = malloc(sizeof(threadArgs_t));
     tArgs->debugWindow = debugContent;
     tArgs->inputWindow = inputWindow;
-    tArgs->outputWindow = outputWindow;
+    tArgs->outputWindow = outputContent;
     tArgs->sd = sd;
     while (retryBool)
     {
@@ -74,13 +78,12 @@ int main(int argc, char *argv[])
             memset(buffer, 0, sizeof(buffer));
             snprintf(buffer, BUFFER_SIZE, "connection was successfull");
             printToWindow(debugContent, buffer);
-
             connection_attempts = 0;
             char client_request[BUFFER_SIZE], server_response[BUFFER_SIZE];
             pthread_t sendThread, recThread;
 
-            pthread_create(&sendThread, NULL, streamUserInput, (void *)&sd);
-            pthread_create(&recThread, NULL, streamServerOutput, (void *)&sd);
+            pthread_create(&sendThread, NULL, streamUserInput, (void *)tArgs);
+            pthread_create(&recThread, NULL, streamServerOutput, (void *)tArgs);
 
             pthread_join(sendThread, NULL);
             pthread_join(recThread, NULL);
@@ -90,7 +93,7 @@ int main(int argc, char *argv[])
             memset(buffer, 0, sizeof(buffer));
             snprintf(buffer, BUFFER_SIZE, "connection was unsuccessfull. press 'r' to try again");
             printToWindow(debugContent, buffer);
-            retry = getch();
+            retry = wgetch(inputWindow);
             if (retry == 'r')
             {
                 retryBool = true;

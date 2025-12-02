@@ -16,6 +16,10 @@
 #include <pthread.h>
 #include <signal.h>
 #include <ncurses.h>
+#include <ctype.h>
+
+#define MAX_MESSAGES 1024
+#define MAX_LEN 1024
 
 #define BUFFER_SIZE 1024
 #define MAX_WORDCOUNT 64
@@ -103,3 +107,5 @@ void printClientMuted(client_t *client);
 
 // gui functions
 void printToWindow(WINDOW *win, char *buffer);
+void addMessage(const char *text);
+void renderOutput(WINDOW *outputWin);

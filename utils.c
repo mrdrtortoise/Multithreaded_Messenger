@@ -2,7 +2,13 @@
 
 char *commandTypes[COMMAND_NR] = {"conn", "say", "sayto", "mute", "unmute", "rename", "disconn", "kick"};
 
+// for server output stream to message buffer
+char messages[MAX_MESSAGES][MAX_LEN];
+int msg_count = 0;
+int scrollOffset = 0;
+
 pthread_rwlock_t rwlock = PTHREAD_RWLOCK_INITIALIZER;
+pthread_mutex_t guiLock = PTHREAD_MUTEX_INITIALIZER;
 // groupNode_t *top = NULL;
 clientNode_t *head = NULL;
 volatile sig_atomic_t running = 1;
@@ -813,11 +819,90 @@ void freeListOfMutedClients(client_t *client, bool haswrlock)
 
 void *streamUserInput(void *clientSocketFD)
 {
-    printf("started user input stream\n");
-    int *sd = (int *)clientSocketFD;
+    threadArgs_t *args = (threadArgs_t *)clientSocketFD;
+    char buffer[MAX_LEN-5] = {0};
+    int inputLen = 0;
+    int x, y;
+    getmaxyx(args->inputWindow, y, x);
+    strcpy(buffer, "starting input stream");
+    printToWindow(args->debugWindow, buffer);
+    wrefresh(args->inputWindow);
     char client_request[BUFFER_SIZE];
     while (running)
     {
+        renderOutput(args->outputWindow);
+
+        werase(args->inputWindow);
+        box(args->inputWindow, 0, 0);
+        mvwprintw(args->inputWindow, 1, 1, " Input (F10 to quit) ");
+        mvwprintw(args->inputWindow, y/2, 1, "> %s", buffer);
+        wmove(args->inputWindow, y/2, 3+inputLen);
+        wrefresh(args->inputWindow);
+
+
+        // get next char
+        int ch = wgetch(args->inputWindow);
+
+        if(ch == ERR){
+            // timeout expired to allow server updates
+            continue;
+        }
+        else if(ch == KEY_UP){
+            pthread_mutex_lock(&guiLock);
+            int visible, w;
+            getmaxyx(args->outputWindow, visible, w);
+            int maxScroll = msg_count - visible;
+            if(maxScroll < 0) maxScroll = 0;
+            if(scrollOffset < maxScroll) scrollOffset++;
+            pthread_mutex_unlock(&guiLock);
+        }
+        else if(ch == KEY_DOWN){
+            pthread_mutex_lock(&guiLock);
+            if(scrollOffset > 0){
+                scrollOffset--;
+            }
+            pthread_mutex_unlock(&guiLock);
+        }
+        else if(ch == '\n'){
+            if(inputLen > 0){
+                char line[MAX_LEN];
+                if(strcmp(line, "exit")){
+                    exit(0);
+                }
+                ssize_t amount_sent = send(args->sd, line, strlen(line), 0);
+                if (amount_sent < 0)
+                {
+                    char error[15];
+                    snprintf(error, 15, "Send Failed");
+                    running = 0;
+                    break;
+                }
+
+                // add message to outut message buffer
+                snprintf(line, MAX_LEN, "you: %s", buffer);
+                addMessage(line);
+
+
+                // reset input buffer
+                int bufferlen = strlen(buffer);
+                for(int i = 0; i < bufferlen; i++){
+                    buffer[i] = '\0';
+                }
+                inputLen = 0;
+                // jump back to the bottom
+                pthread_mutex_lock(&guiLock);
+                scrollOffset = 0;
+                pthread_mutex_unlock(&guiLock);
+            }
+        }
+        else if(isprint(ch)){
+            if(inputLen < MAX_LEN - 1){
+                buffer[inputLen++] = ch;
+                buffer[inputLen] = '\0';
+            }
+        }
+
+
         if (fgets(client_request, BUFFER_SIZE, stdin) == NULL)
         {
             perror("fgets failed");
@@ -833,7 +918,7 @@ void *streamUserInput(void *clientSocketFD)
         }
         if (running)
         {
-            ssize_t amount_sent = send(*sd, client_request, strlen(client_request), 0);
+            ssize_t amount_sent = send(args->sd, client_request, strlen(client_request), 0);
             if (amount_sent < 0)
             {
                 perror("send failed");
@@ -847,29 +932,35 @@ void *streamUserInput(void *clientSocketFD)
 
 void *streamServerOutput(void *clientSocketFD)
 {
-    printf("started server output stream\n");
-    int *sd = (int *)clientSocketFD;
+    threadArgs_t *args = (threadArgs_t *)clientSocketFD;
+    char buffer[BUFFER_SIZE];
+    strcpy(buffer, "starting output stream");
+    printToWindow(args->debugWindow, buffer);
+    wrefresh(args->inputWindow);
     char serverResponse[MAX_SERVER_RESPONSE];
     while (running)
     {
-        int readResult = recv(*sd, serverResponse, MAX_SERVER_RESPONSE, 0);
+        int readResult = recv(args->sd, serverResponse, MAX_SERVER_RESPONSE, 0);
         if (readResult > 0)
         {
+            strcpy(buffer, "adding message to queue");
+            printToWindow(args->debugWindow, buffer);
             serverResponse[readResult] = '\0';
-            printf("%s", serverResponse);
+            addMessage(serverResponse);
         }
         else if (readResult == 0)
         {
-            printf("Connection Closed by Peer\n");
-            close(*sd);
+            strcpy(buffer, "Connection Closed by Peer");
+            printToWindow(args->debugWindow, buffer);
+            close(args->sd);
             running = 0;
-            printf("running set to: %d\n", running);
             break;
         }
         else
         {
-            perror("recv failed");
-            close(*sd);
+            strcpy(buffer, "Recv Failed");
+            printToWindow(args->debugWindow, buffer);
+            close(args->sd);
             running = 0;
             break;
         }
@@ -981,9 +1072,10 @@ client_t *inServerList(client_t *client, bool hasLock, bool byClientName, char *
     return NULL;
 }
 
-// NEEDS CONCURRENCY?
+// CONCURRENCY IMPLEMENTED
 void printToWindow(WINDOW *win, char *buffer)
 {
+    pthread_mutex_lock(&guiLock);
     int max_x, max_y;
     getmaxyx(win, max_y, max_x);
 
@@ -1004,7 +1096,7 @@ void printToWindow(WINDOW *win, char *buffer)
             writeBuffer[j] = '\0';
             getyx(win, curr_y, curr_x);
             wprintw(win, "%s", writeBuffer);
-            wmove(win, curr_y + 1, 1);
+            wmove(win, curr_y + 1, 0);
             wrefresh(win);
 
             // reset buffer
@@ -1013,5 +1105,57 @@ void printToWindow(WINDOW *win, char *buffer)
         }
     }
     getyx(win, curr_y, curr_x);
-    wmove(win, curr_y + 1, 1);
+    wmove(win, curr_y + 1, 0);
+    if(curr_y > 0.75*max_y){
+        wscrl(win, 5);
+        wmove(win, curr_y-4, 0);
+    }
+    wrefresh(win);
+    pthread_mutex_unlock(&guiLock);
+}
+
+// add message to message buffer with concurrency implemented
+void addMessage(const char *text){
+    pthread_mutex_lock(&guiLock);
+
+    if(msg_count < MAX_MESSAGES) {
+        strncpy(messages[msg_count], text, MAX_LEN-1);
+        messages[msg_count][MAX_LEN-1] = '\0';
+        msg_count++;
+    }
+    else{
+        for(int i = 1; i < MAX_MESSAGES; i++){
+            strcpy(messages[i-1], messages[i]);
+        }
+        strncpy(messages[MAX_MESSAGES-1], text, MAX_LEN-1);
+        messages[MAX_MESSAGES-1][MAX_LEN-1] = '\0';
+    }
+    pthread_mutex_unlock(&guiLock);
+}
+
+void renderOutput(WINDOW *outputWin){
+    int height, width;
+    getmaxyx(outputWin, height, width);
+
+    int visible = height; // since we are inside the outputContext (scrollable)
+
+    werase(outputWin);
+
+    pthread_mutex_lock(&guiLock);
+
+    int maxScroll = msg_count - visible;
+    if(maxScroll < 0) maxScroll = 0;
+    if(scrollOffset > maxScroll) scrollOffset = maxScroll;
+    if(scrollOffset < 0) scrollOffset = 0;
+
+    int start = msg_count - visible - scrollOffset;
+    if(start < 0) start = 0;
+
+    int row = 0;
+    for(int i = start; i < msg_count && row < height-1; i++, row++){
+        printToWindow(outputWin, messages[i]);
+    }
+
+    pthread_mutex_unlock(&guiLock);
+    wrefresh(outputWin);
 }
