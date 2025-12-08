@@ -1,6 +1,6 @@
 #include "tcp.h"
 
-char *commandTypes[COMMAND_NR] = {"conn", "say", "sayto", "mute", "unmute", "rename", "disconn", "kick"};
+char *commandTypes[COMMAND_NR] = {"conn", "say", "sayto", "mute", "unmute", "rename", "disconn", "kick", "listmembers"};
 
 // for server output stream to message buffer
 char messages[MAX_MESSAGES][MAX_LEN];
@@ -220,7 +220,10 @@ void *clientHandler(void *newClient)
                 if (responseFromCommandLaunch != NULL)
                 {
                     printf("sending response from command launch\n");
-                    amount_sent = send(client->clientSocketFD, responseFromCommandLaunch, strlen(responseFromCommandLaunch), 0);
+                    if (parseResult == 0 || parseResult == 5 || parseResult == 8)
+                    {
+                        amount_sent = send(client->clientSocketFD, responseFromCommandLaunch, strlen(responseFromCommandLaunch), 0);
+                    }
                     free(responseFromCommandLaunch);
                 }
                 else
@@ -276,6 +279,7 @@ int parseClientRequest(int *argc, char arg[], char sendToClient[], char clientRe
     // extracting the commandType
     snprintf(command, MAX_COMMAND_LEN, "%s", args[0]);
     int commandStrLen = strlen(command);
+    printf("\ncommand = %s\n\n", command);
     if (command[commandStrLen - 1] == '$')
     {
         command[commandStrLen - 1] = '\0';
@@ -296,6 +300,7 @@ int parseClientRequest(int *argc, char arg[], char sendToClient[], char clientRe
             strcpy(arg, args[1]);
             for (int i = 2; args[i] != NULL && i < MAX_WORDCOUNT; i++)
             {
+                printf("adding %s to args of sayto\n", args[i]);
                 strcat(arg, " ");
                 strcat(arg, args[i]);
             }
@@ -346,37 +351,42 @@ char *launchCommand(int commandIdx, char *arg, char *client_r, client_t *client)
 
     if (inServerList(client, true, false, NULL) != NULL || commandIdx == 0)
     {
-        if (commandIdx == 0)
+        if (commandIdx == CONN)
         {
             serverResponse = launchConn(arg, client);
         }
-        else if (commandIdx == 1)
+        else if (commandIdx == SAY)
         {
             serverResponse = launchSay(arg, client, NULL, false);
         }
-        else if (commandIdx == 2)
+        else if (commandIdx == SAYTO)
         {
             serverResponse = launchSay(arg, client, client_r, true);
         }
-        else if (commandIdx == 3)
+        else if (commandIdx == MUTE)
         {
             serverResponse = muteClient(client, arg);
         }
-        else if (commandIdx == 4)
+        else if (commandIdx == UNMUTE)
         {
             serverResponse = unmuteClient(client, arg);
         }
-        else if (commandIdx == 5)
+        else if (commandIdx == RENAME)
         {
             serverResponse = renameClient(client, arg);
         }
-        else if (commandIdx == 6)
+        else if (commandIdx == DISCONN)
         {
             serverResponse = launchDisconn(client);
         }
-        else if (commandIdx == 7)
+        else if (commandIdx == KICK)
         {
             serverResponse = kickClient(client, arg);
+        }
+        else if (commandIdx == LISTMEMBERS)
+        {
+            printf("launching listmembers()\n");
+            serverResponse = listMembers();
         }
         else
         {
@@ -423,7 +433,7 @@ char *launchConn(char *arg, client_t *newClient)
                 (curr->client->clientAddress.sin_addr.s_addr == newClient->clientAddress.sin_addr.s_addr))
             {
                 printf("client already exits\n");
-                snprintf(buffer, BUFFER_SIZE, "\nSERVER >> You are already conneced to the server with username: %s\n\n", curr->client->client_name);
+                snprintf(buffer, BUFFER_SIZE, "SERVER >> You are already conneced to the server with username: %s\n", curr->client->client_name);
                 pthread_rwlock_unlock(&rwlock);
                 return buffer;
             }
@@ -434,7 +444,7 @@ char *launchConn(char *arg, client_t *newClient)
         if (inServerList(NULL, true, true, arg) != NULL)
         {
             printf("client with this name already exits\n");
-            snprintf(buffer, BUFFER_SIZE, "\nSERVER >> This Username (%s) Is Already Taken By Someone Else. Please Choose Another One \n\n", arg);
+            snprintf(buffer, BUFFER_SIZE, "SERVER >> This Username (%s) Is Already Taken By Someone Else. Please Choose Another One \n", arg);
             pthread_rwlock_unlock(&rwlock);
             return buffer;
         }
@@ -456,7 +466,7 @@ char *launchConn(char *arg, client_t *newClient)
         if (inServerList(NULL, true, true, arg) != NULL)
         {
             // Username taken by another client during the brief window
-            strcpy(buffer, "\nSERVER >> Username taken by another client. Please choose a different name.\n\n");
+            strcpy(buffer, "SERVER >> Username taken by another client. Please choose a different name.\n");
             pthread_rwlock_unlock(&rwlock);
             return buffer;
         }
@@ -469,7 +479,7 @@ char *launchConn(char *arg, client_t *newClient)
         newNode->next = head;
         head = newNode;
         printf("added to the server successfully\n");
-        snprintf(buffer, BUFFER_SIZE, "\nSERVER >> Successfully connected you to the server with username: %s\n\n", newNode->client->client_name);
+        snprintf(buffer, BUFFER_SIZE, "SERVER >> Successfully connected you to the server with username: %s\n", newNode->client->client_name);
         pthread_rwlock_unlock(&rwlock);
     }
     else
@@ -540,7 +550,6 @@ char *launchSay(char *arg, client_t *client_s, char *client_r, bool sayTo)
     {
         msgBroadcast[j++] = arg[i];
     }
-    msgBroadcast[j++] = '\n';
     msgBroadcast[j++] = '\n';
     msgBroadcast[j++] = '\0';
 
@@ -725,6 +734,25 @@ char *kickClient(client_t *client, char *nameOfClientToBeKicked)
     return buffer;
 }
 
+char *listMembers()
+{
+    pthread_rwlock_rdlock(&rwlock);
+    size_t bufferlen;
+    clientNode_t *curr = head;
+    char *buffer = malloc(BUFFER_SIZE);
+    strcpy(buffer, "8#");
+    while (curr != NULL)
+    {
+        bufferlen = strlen(buffer);
+        snprintf(buffer + bufferlen, BUFFER_SIZE - bufferlen, "%s\n", curr->client->client_name);
+        curr = curr->next;
+        printf("current buffer contents: %s\n", buffer);
+    }
+    printf("unlocking read lock in listmembers()\n");
+    pthread_rwlock_unlock(&rwlock);
+    return buffer;
+}
+
 // CONCURRENCY CHECKED
 bool freeClientNodeFromLL(client_t *rmClient, bool haswrlock)
 {
@@ -818,7 +846,7 @@ void freeListOfMutedClients(client_t *client, bool haswrlock)
 void *streamUserInput(void *clientSocketFD)
 {
     threadArgs_t *args = (threadArgs_t *)clientSocketFD;
-    char buffer[MAX_LEN-5] = {0};
+    char buffer[MAX_LEN - 5] = {0};
     int inputLen = 0;
     int x, y;
     getmaxyx(args->inputWindow, y, x);
@@ -833,38 +861,46 @@ void *streamUserInput(void *clientSocketFD)
         werase(args->inputWindow);
         box(args->inputWindow, 0, 0);
         mvwprintw(args->inputWindow, 1, 1, " Input (F10 to quit) ");
-        mvwprintw(args->inputWindow, y/2, 1, "> %s", buffer);
-        wmove(args->inputWindow, y/2, 3+inputLen);
+        mvwprintw(args->inputWindow, y / 2, 1, "> %s", buffer);
+        wmove(args->inputWindow, y / 2, 3 + inputLen);
         wrefresh(args->inputWindow);
-
 
         // get next char
         int ch = wgetch(args->inputWindow);
 
-        if(ch == ERR){
+        if (ch == ERR)
+        {
             // timeout expired to allow server updates
             continue;
         }
-        else if(ch == KEY_UP){
+        else if (ch == KEY_UP)
+        {
             pthread_mutex_lock(&guiLock);
             int visible, w;
             getmaxyx(args->outputWindow, visible, w);
             int maxScroll = msg_count - visible;
-            if(maxScroll < 0) maxScroll = 0;
-            if(scrollOffset < maxScroll) scrollOffset++;
+            if (maxScroll < 0)
+                maxScroll = 0;
+            if (scrollOffset < maxScroll)
+                scrollOffset++;
             pthread_mutex_unlock(&guiLock);
         }
-        else if(ch == KEY_DOWN){
+        else if (ch == KEY_DOWN)
+        {
             pthread_mutex_lock(&guiLock);
-            if(scrollOffset > 0){
+            if (scrollOffset > 0)
+            {
                 scrollOffset--;
             }
             pthread_mutex_unlock(&guiLock);
         }
-        else if(ch == '\n'){
-            if(inputLen > 0){
+        else if (ch == '\n')
+        {
+            if (inputLen > 0)
+            {
                 char line[MAX_LEN];
-                if(strcmp(line, "exit")){
+                if (strcmp(line, "exit"))
+                {
                     exit(0);
                 }
                 ssize_t amount_sent = send(args->sd, line, strlen(line), 0);
@@ -880,10 +916,10 @@ void *streamUserInput(void *clientSocketFD)
                 snprintf(line, MAX_LEN, "you: %s", buffer);
                 addMessage(line);
 
-
                 // reset input buffer
                 int bufferlen = strlen(buffer);
-                for(int i = 0; i < bufferlen; i++){
+                for (int i = 0; i < bufferlen; i++)
+                {
                     buffer[i] = '\0';
                 }
                 inputLen = 0;
@@ -893,13 +929,14 @@ void *streamUserInput(void *clientSocketFD)
                 pthread_mutex_unlock(&guiLock);
             }
         }
-        else if(isprint(ch)){
-            if(inputLen < MAX_LEN - 1){
+        else if (isprint(ch))
+        {
+            if (inputLen < MAX_LEN - 1)
+            {
                 buffer[inputLen++] = ch;
                 buffer[inputLen] = '\0';
             }
         }
-
 
         if (fgets(client_request, BUFFER_SIZE, stdin) == NULL)
         {
@@ -1104,34 +1141,40 @@ void printToWindow(WINDOW *win, char *buffer)
     }
     getyx(win, curr_y, curr_x);
     wmove(win, curr_y + 1, 0);
-    if(curr_y > 0.75*max_y){
+    if (curr_y > 0.75 * max_y)
+    {
         wscrl(win, 5);
-        wmove(win, curr_y-4, 0);
+        wmove(win, curr_y - 4, 0);
     }
     wrefresh(win);
     pthread_mutex_unlock(&guiLock);
 }
 
 // add message to message buffer with concurrency implemented
-void addMessage(const char *text){
+void addMessage(const char *text)
+{
     pthread_mutex_lock(&guiLock);
 
-    if(msg_count < MAX_MESSAGES) {
-        strncpy(messages[msg_count], text, MAX_LEN-1);
-        messages[msg_count][MAX_LEN-1] = '\0';
+    if (msg_count < MAX_MESSAGES)
+    {
+        strncpy(messages[msg_count], text, MAX_LEN - 1);
+        messages[msg_count][MAX_LEN - 1] = '\0';
         msg_count++;
     }
-    else{
-        for(int i = 1; i < MAX_MESSAGES; i++){
-            strcpy(messages[i-1], messages[i]);
+    else
+    {
+        for (int i = 1; i < MAX_MESSAGES; i++)
+        {
+            strcpy(messages[i - 1], messages[i]);
         }
-        strncpy(messages[MAX_MESSAGES-1], text, MAX_LEN-1);
-        messages[MAX_MESSAGES-1][MAX_LEN-1] = '\0';
+        strncpy(messages[MAX_MESSAGES - 1], text, MAX_LEN - 1);
+        messages[MAX_MESSAGES - 1][MAX_LEN - 1] = '\0';
     }
     pthread_mutex_unlock(&guiLock);
 }
 
-void renderOutput(WINDOW *outputWin){
+void renderOutput(WINDOW *outputWin)
+{
     int height, width;
     getmaxyx(outputWin, height, width);
 
@@ -1142,15 +1185,20 @@ void renderOutput(WINDOW *outputWin){
     pthread_mutex_lock(&guiLock);
 
     int maxScroll = msg_count - visible;
-    if(maxScroll < 0) maxScroll = 0;
-    if(scrollOffset > maxScroll) scrollOffset = maxScroll;
-    if(scrollOffset < 0) scrollOffset = 0;
+    if (maxScroll < 0)
+        maxScroll = 0;
+    if (scrollOffset > maxScroll)
+        scrollOffset = maxScroll;
+    if (scrollOffset < 0)
+        scrollOffset = 0;
 
     int start = msg_count - visible - scrollOffset;
-    if(start < 0) start = 0;
+    if (start < 0)
+        start = 0;
 
     int row = 0;
-    for(int i = start; i < msg_count && row < height-1; i++, row++){
+    for (int i = start; i < msg_count && row < height - 1; i++, row++)
+    {
         printToWindow(outputWin, messages[i]);
     }
 

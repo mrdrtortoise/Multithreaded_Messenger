@@ -27,12 +27,12 @@
 #define SERVER_BACKLOG 5
 #define MAX_CONN_CLIENTS 20
 #define MAX_CLIENT_NAME 16
-#define MAX_COMMAND_LEN 10
+#define MAX_COMMAND_LEN 16
 #define MAX_SERVER_RESPONSE 1106
 #define MAX_GROUP_NAME 64
 #define ADMIN_PORT_NUMBER 2000
 #define CLIENT_PORT 0
-#define COMMAND_NR 8
+#define COMMAND_NR 9
 #define CONN 0    // done
 #define SAY 1     // done
 #define SAYTO 2   // done
@@ -41,6 +41,7 @@
 #define RENAME 5  // TODO
 #define DISCONN 6 // done
 #define KICK 7    // only for admin TODO
+#define LISTMEMBERS 8
 
 struct client;
 typedef struct client client_t;
@@ -56,6 +57,7 @@ typedef struct threadArgs
     WINDOW *inputWindow;
     WINDOW *outputWindow;
     WINDOW *debugWindow;
+    WINDOW *infoWindow;
     int sd;
 } threadArgs_t;
 
@@ -93,6 +95,7 @@ char *muteClient(client_t *client, char *nameOfClientToBeMuted);
 char *unmuteClient(client_t *client, char *nameOfClientToBeUnmuted);
 char *renameClient(client_t *client, char *newName);
 char *kickClient(client_t *client, char *nameOfClientToBeKicked);
+char *listMembers();
 
 /// Client Functions
 void *streamUserInput(void *clientSocketFD);
