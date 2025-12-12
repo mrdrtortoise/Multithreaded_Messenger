@@ -72,7 +72,7 @@ The Server Output stream thread implements the following functions:
 
 The interface is divided into four windows: Input Window, Output Window, Info Window and Debug Window.
 
-All do what their name implies. The info window is special, and part of the *groups* extension. More commands were implemented so the client can get information about which group they are in, and which groups are available to joing. It also allows the user to list all the clients that are currently in their group.
+All do what their name implies. The info window is special, and part of the *groups* extension. More commands were implemented so the client can get information about which group they are in, and which groups are available to join. It also allows the user to list all the clients that are currently in their group. The output of all group-related instructions is printed in the info window.
 
 All ncurses calls are protected by mutexes to ensure thread safety.
 
