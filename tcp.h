@@ -23,7 +23,7 @@
 
 #define BUFFER_SIZE 1024
 #define MAX_WORDCOUNT 64
-#define SERVER_PORT 12001
+#define SERVER_PORT 12000
 #define SERVER_BACKLOG 5
 #define MAX_CONN_CLIENTS 20
 #define MAX_CLIENT_NAME 16
@@ -32,7 +32,7 @@
 #define MAX_GROUP_NAME 64
 #define ADMIN_PORT_NUMBER 2000
 #define CLIENT_PORT 0
-#define COMMAND_NR 9
+#define COMMAND_NR 12
 #define CONN 0    // done
 #define SAY 1     // done
 #define SAYTO 2   // done
@@ -42,6 +42,9 @@
 #define DISCONN 6 // done
 #define KICK 7    // only for admin TODO
 #define LISTMEMBERS 8
+#define CREATEGROUP 9
+#define LISTGROUPS 10
+#define JOINGROUP 11
 
 struct client;
 typedef struct client client_t;
@@ -84,7 +87,7 @@ client_t *accept_new_client(int serverSocketFD);
 void spawnClientHandlerThread(client_t *newClient);
 void *clientHandler(void *newClient);
 
-int parseClientRequest(int *argc, char arg1[], char arg2[], char clientRequest[]);
+int parseClientRequest(int *argc, char arg1[], char arg2[], char clientRequest[], bool print);
 
 // launching different possible client commands
 char *launchCommand(int commandIdx, char *arg, char *arg2, client_t *client);
@@ -95,20 +98,25 @@ char *muteClient(client_t *client, char *nameOfClientToBeMuted);
 char *unmuteClient(client_t *client, char *nameOfClientToBeUnmuted);
 char *renameClient(client_t *client, char *newName);
 char *kickClient(client_t *client, char *nameOfClientToBeKicked);
-char *listMembers();
-
-/// Client Functions
-void *streamUserInput(void *clientSocketFD);
-void *streamServerOutput(void *clientInfo);
+char *listMembers(char *groupName);
 
 // server list function
 bool isMuted(client_t *client, char *name, bool hasLock);
 // finds if client * or clientname is in the serverlist. returns a pointer to the client if found. returns NULL if not found
-client_t *inServerList(client_t *client, bool hasLock, bool byClientName, char *name);
-void printServerLL();
 void printClientMuted(client_t *client);
 
 // gui functions
 void printToWindow(WINDOW *win, char *buffer);
 void addMessage(const char *text);
 void renderOutput(WINDOW *outputWin);
+
+// functions for groups
+client_t *inServerTree(client_t *client, bool hasLock, bool byClientName, char *name);
+char *whichGroup(client_t *client, bool hasLock, bool byClientName, char *name);
+bool freeClientNodeFromTree(client_t *rmClient, bool haswrlock);
+clientNode_t *getFirstClientByGroupName(char *groupname, bool hasLock);
+client_t *inGroupList(client_t *client, bool hasLock, bool byClientName, char *name, char *groupName);
+void printServerTree();
+char *createGroup(const char *name);
+char *listGroups();
+char *joinGroup(client_t *client, const char *groupName);

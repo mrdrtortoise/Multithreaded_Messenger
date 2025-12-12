@@ -1,5 +1,5 @@
 # Multithreaded_Messenger
 
-Messenger application in C that allows for multiple clients on a network to connect and chat
-Allows for clients to connect, create and join groups to talk among other clients in seperated environments
-Uses TCP for reliable communication without package loss
+This is the submission for the Chat_Messenger Assignment for Maximilian Heuberger (CID 02579633) and Jad Saad (CID 02614625).
+
+We Implemented all the required functionalities of the second assignment and 2 extensions.

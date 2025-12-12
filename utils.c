@@ -1,6 +1,6 @@
 #include "tcp.h"
 
-char *commandTypes[COMMAND_NR] = {"conn", "say", "sayto", "mute", "unmute", "rename", "disconn", "kick", "listmembers"};
+char *commandTypes[COMMAND_NR] = {"conn", "say", "sayto", "mute", "unmute", "rename", "disconn", "kick", "listmembers", "creategroup", "listgroups", "joingroup"};
 
 // for server output stream to message buffer
 char messages[MAX_MESSAGES][MAX_LEN];
@@ -9,7 +9,7 @@ int scrollOffset = 0;
 
 pthread_rwlock_t rwlock = PTHREAD_RWLOCK_INITIALIZER;
 pthread_mutex_t guiLock = PTHREAD_MUTEX_INITIALIZER;
-// groupNode_t *top = NULL;
+groupNode_t *top = NULL;
 clientNode_t *head = NULL;
 volatile sig_atomic_t running = 1;
 
@@ -35,11 +35,6 @@ typedef struct clientNode
     struct clientNode *next;
 } clientNode_t;
 
-// groupNode structure will serve as the top nodes of each group. from each of these nodes there will be a "linked list"
-// of client nodes that represent all the clients that are part of that group.
-// will have to implement funcitons like "listgroups$", "join$ <groupname>"
-// sayto should be able to say to any person on the server.
-// say will broadcast locally within a group.
 typedef struct groupNode
 {
     char groupName[MAX_GROUP_NAME];
@@ -133,12 +128,12 @@ int tcp_socket_open(int port, WINDOW *outputWin)
 void start_accepting_clients(int serverSocketFD)
 {
     // use writer lock to modify shared top pointer
-    /*pthread_rwlock_wrlock(&rwlock);
+    pthread_rwlock_wrlock(&rwlock);
     groupNode_t *mainGroup = malloc(sizeof(groupNode_t));
     strcpy(mainGroup->groupName, "main");
     mainGroup->nextGroup = NULL;
     top = mainGroup;
-    pthread_rwlock_unlock(&rwlock);*/
+    pthread_rwlock_unlock(&rwlock);
     while (1)
     {
         client_t *newClient = accept_new_client(serverSocketFD);
@@ -201,7 +196,7 @@ void *clientHandler(void *newClient)
     while (1)
     {
         printf("Server Linked List\n");
-        printServerLL();
+        printServerTree();
         printf("list of muted clients for: %s\n", client->client_name);
         printClientMuted(client);
         readResult = recv(client->clientSocketFD, clientRequest, BUFFER_SIZE, 0);
@@ -211,7 +206,7 @@ void *clientHandler(void *newClient)
             clientRequest[readResult] = '\0';
             printf("Server has recieved the a client request from client[%d]: %s\n", client->clientSocketFD, clientRequest);
 
-            parseResult = parseClientRequest(&argc, arg, recClientName, clientRequest);
+            parseResult = parseClientRequest(&argc, arg, recClientName, clientRequest, true);
             if (parseResult > -1)
             {
                 // MUST FREE RESPONSE ONCE DONE USING (MALLOC) -> TODO
@@ -220,15 +215,16 @@ void *clientHandler(void *newClient)
                 if (responseFromCommandLaunch != NULL)
                 {
                     printf("sending response from command launch\n");
-                    if (parseResult == 0 || parseResult == 5 || parseResult == 8)
+                    if (parseResult == 0 || parseResult == 5 || parseResult == 8 || parseResult == 6 || parseResult == 7 || parseResult == 10)
                     {
+                        printf("sending result\n");
                         amount_sent = send(client->clientSocketFD, responseFromCommandLaunch, strlen(responseFromCommandLaunch), 0);
                     }
                     free(responseFromCommandLaunch);
                 }
                 else
                 {
-                    strcpy(serverResponse, "\nSERVER >> This Command Does Not Exist.\n\n");
+                    strcpy(serverResponse, "\nSERVER >> Either This Command Does Not Exist, or the person you sent to is not in the same group\n\n");
                     amount_sent = send(client->clientSocketFD, serverResponse, strlen(serverResponse), 0);
                 }
             }
@@ -253,7 +249,7 @@ void *clientHandler(void *newClient)
         }
     }
     printf("\n\nattempting to free node containing disconnected client...\n");
-    freeClientNodeFromLL(client, false);
+    freeClientNodeFromTree(client, false);
     printf("closing clientSocketFD: %d\n", client->clientSocketFD);
     close(client->clientSocketFD);
     printf("freeing memory of clients muted list...\n\n");
@@ -262,7 +258,7 @@ void *clientHandler(void *newClient)
     free(client);
 }
 
-int parseClientRequest(int *argc, char arg[], char sendToClient[], char clientRequest[])
+int parseClientRequest(int *argc, char arg[], char sendToClient[], char clientRequest[], bool print)
 {
     /// using tokens
     char command[MAX_COMMAND_LEN];
@@ -279,20 +275,21 @@ int parseClientRequest(int *argc, char arg[], char sendToClient[], char clientRe
     // extracting the commandType
     snprintf(command, MAX_COMMAND_LEN, "%s", args[0]);
     int commandStrLen = strlen(command);
-    printf("\ncommand = %s\n\n", command);
+    if (print)
+        printf("\ncommand = %s\n\n", command);
     if (command[commandStrLen - 1] == '$')
     {
         command[commandStrLen - 1] = '\0';
     }
     else
     {
-        printf("\nfirst element in args[] did not have a '$' char at the end\n\n");
+        if (print)
+            printf("\nfirst element in args[] did not have a '$' char at the end\n\n");
         return -1;
     }
-    printf("\ncommand is now: %s\n\n", command);
+    if (print)
+        printf("\ncommand is now: %s\n\n", command);
 
-    // extracting arg (first element after $ for normal commands and second element after $ for sayTo)
-    // extracting recipient (if available)
     if ((*argc) > 1)
     {
         if (strcmp(command, "sayto") != 0)
@@ -300,18 +297,21 @@ int parseClientRequest(int *argc, char arg[], char sendToClient[], char clientRe
             strcpy(arg, args[1]);
             for (int i = 2; args[i] != NULL && i < MAX_WORDCOUNT; i++)
             {
-                printf("adding %s to args of sayto\n", args[i]);
+                if (print)
+                    printf("adding %s to args of sayto\n", args[i]);
                 strcat(arg, " ");
                 strcat(arg, args[i]);
             }
-            printf("setting arg to: %s\n", arg);
+            if (print)
+                printf("setting arg to: %s\n", arg);
             sendToClient = NULL;
         }
         else
         {
-            if (inServerList(NULL, false, true, args[1]) != NULL)
+            if (inServerTree(NULL, false, true, args[1]) != NULL)
             {
-                printf("setting arg to: %s\nsetting client recipient to: %s\n", args[2], args[1]);
+                if (print)
+                    printf("setting arg to: %s\nsetting client recipient to: %s\n", args[2], args[1]);
                 strcpy(sendToClient, args[1]);
                 strcpy(arg, args[2]);
                 for (int i = 3; args[i] != NULL && i < MAX_WORDCOUNT; i++)
@@ -323,7 +323,8 @@ int parseClientRequest(int *argc, char arg[], char sendToClient[], char clientRe
             else
             {
                 strcpy(sendToClient, args[1]);
-                printf("the recipient does not exist\n");
+                if (print)
+                    printf("the recipient does not exist\n");
                 return -2;
             }
         }
@@ -341,15 +342,15 @@ int parseClientRequest(int *argc, char arg[], char sendToClient[], char clientRe
             return i;
         }
     }
-    printf("Error: command entered by client not found\n");
+    if (print)
+        printf("Error: command entered by client not found\n");
     return -1;
 }
 
 char *launchCommand(int commandIdx, char *arg, char *client_r, client_t *client)
 {
     char *serverResponse;
-
-    if (inServerList(client, true, false, NULL) != NULL || commandIdx == 0)
+    if (inServerTree(client, true, false, NULL) != NULL || commandIdx == 0)
     {
         if (commandIdx == CONN)
         {
@@ -383,10 +384,31 @@ char *launchCommand(int commandIdx, char *arg, char *client_r, client_t *client)
         {
             serverResponse = kickClient(client, arg);
         }
+        else if (commandIdx == CREATEGROUP)
+        {
+            serverResponse = createGroup(arg);
+        }
+        else if (commandIdx == LISTGROUPS)
+        {
+            serverResponse = listGroups();
+        }
+        else if (commandIdx == JOINGROUP)
+        {
+            serverResponse = joinGroup(client, arg);
+        }
         else if (commandIdx == LISTMEMBERS)
         {
-            printf("launching listmembers()\n");
-            serverResponse = listMembers();
+            char *group = whichGroup(client, false, false, NULL);
+            if (group == NULL)
+            {
+                serverResponse = malloc(BUFFER_SIZE);
+                strcpy(serverResponse, "SERVER >> You are not in a group\n");
+            }
+            else
+            {
+                serverResponse = listMembers(group);
+                free(group);
+            }
         }
         else
         {
@@ -402,7 +424,6 @@ char *launchCommand(int commandIdx, char *arg, char *client_r, client_t *client)
     return serverResponse;
 }
 
-// CONCURRENCY CHECKED
 char *launchConn(char *arg, client_t *newClient)
 {
     printf("entered launchConn\n");
@@ -425,23 +446,28 @@ char *launchConn(char *arg, client_t *newClient)
 
         // Check if client with same address is already connected
         // however right now I am only iterating through one branch of the tree. would have to go through all branches. TODO
-        clientNode_t *curr = head;
-        while (curr != NULL)
+        groupNode_t *g = top;
+        while (g != NULL)
         {
-            printf("looping inside launchConn\n");
-            if ((curr->client->clientAddress.sin_port == newClient->clientAddress.sin_port) &&
-                (curr->client->clientAddress.sin_addr.s_addr == newClient->clientAddress.sin_addr.s_addr))
+            clientNode_t *curr = g->firstClient;
+            while (curr != NULL)
             {
-                printf("client already exits\n");
-                snprintf(buffer, BUFFER_SIZE, "SERVER >> You are already conneced to the server with username: %s\n", curr->client->client_name);
-                pthread_rwlock_unlock(&rwlock);
-                return buffer;
+                printf("looping inside launchConn\n");
+                if ((curr->client->clientAddress.sin_port == newClient->clientAddress.sin_port) &&
+                    (curr->client->clientAddress.sin_addr.s_addr == newClient->clientAddress.sin_addr.s_addr))
+                {
+                    printf("client already exits\n");
+                    snprintf(buffer, BUFFER_SIZE, "SERVER >> You are already conneced to the server with username: %s\n", curr->client->client_name);
+                    pthread_rwlock_unlock(&rwlock);
+                    return buffer;
+                }
+                curr = curr->next;
             }
-            curr = curr->next;
+            g = g->nextGroup;
         }
 
-        // Check if username is already taken
-        if (inServerList(NULL, true, true, arg) != NULL)
+        // Check if username is already taken in tree
+        if (inServerTree(NULL, true, true, arg) != NULL)
         {
             printf("client with this name already exits\n");
             snprintf(buffer, BUFFER_SIZE, "SERVER >> This Username (%s) Is Already Taken By Someone Else. Please Choose Another One \n", arg);
@@ -463,7 +489,7 @@ char *launchConn(char *arg, client_t *newClient)
         pthread_rwlock_wrlock(&rwlock); // Acquire write lock
 
         // Re-validate that username is still available (state might have changed)
-        if (inServerList(NULL, true, true, arg) != NULL)
+        if (inServerTree(NULL, true, true, arg) != NULL)
         {
             // Username taken by another client during the brief window
             strcpy(buffer, "SERVER >> Username taken by another client. Please choose a different name.\n");
@@ -471,15 +497,33 @@ char *launchConn(char *arg, client_t *newClient)
             return buffer;
         }
 
-        printf("adding a new node to the serverList\n");
+        printf("adding a new node to the serverTree in group MAIN\n");
+        // finding group main in server tree
+        g = top;
+        while (g != NULL)
+        {
+            if (strcmp(g->groupName, "main") == 0)
+            {
+                break;
+            }
+            g = g->nextGroup;
+        }
         strncpy(newClient->client_name, arg, MAX_CLIENT_NAME - 1);
         newClient->client_name[MAX_CLIENT_NAME - 1] = '\0';
         clientNode_t *newNode = malloc(sizeof(clientNode_t));
         newNode->client = newClient;
-        newNode->next = head;
-        head = newNode;
+        newNode->next = g->firstClient;
+        g->firstClient = newNode;
         printf("added to the server successfully\n");
-        snprintf(buffer, BUFFER_SIZE, "SERVER >> Successfully connected you to the server with username: %s\n", newNode->client->client_name);
+        char *groupName = whichGroup(newClient, true, false, NULL);
+        if (groupName != NULL)
+        {
+            snprintf(buffer, BUFFER_SIZE, "SERVER >> Successfully connected you to the server in group: %s with username: %s\n", groupName, newNode->client->client_name);
+        }
+        else
+        {
+            snprintf(buffer, BUFFER_SIZE, "SERVER >> whichGroup() returned NULL\n");
+        }
         pthread_rwlock_unlock(&rwlock);
     }
     else
@@ -490,7 +534,6 @@ char *launchConn(char *arg, client_t *newClient)
     return buffer;
 }
 
-// CONCURRENCY CHECKED
 char *launchDisconn(client_t *newClient)
 {
     /// this function should be replaced mostly by just freeClientFromLL().
@@ -506,8 +549,9 @@ char *launchDisconn(client_t *newClient)
     }
     pthread_rwlock_wrlock(&rwlock);
     char *buffer = malloc(BUFFER_SIZE);
-    if (freeClientNodeFromLL(newClient, true))
+    if (freeClientNodeFromTree(newClient, true))
     {
+
         strcpy(buffer, "\nDisconnecting...\n\n");
         strcpy(newClient->client_name, "n/a");
         // freeing muted clients
@@ -532,9 +576,9 @@ char *launchDisconn(client_t *newClient)
     }
 }
 
-// CONCURRENCY CHECKED
 char *launchSay(char *arg, client_t *client_s, char *client_r, bool sayTo)
 {
+    char *serverResponse = malloc(BUFFER_SIZE);
     char msgBroadcast[1042];             // MAX_BUFFER_SIZE + MAX_CLIENT_NAME + 2
     char DMmessage[MAX_SERVER_RESPONSE]; // msgBroadcast + 1042
     int i, j;
@@ -555,60 +599,95 @@ char *launchSay(char *arg, client_t *client_s, char *client_r, bool sayTo)
 
     client_t *recipientClientStruct = NULL; // initialize the pointer that will be used to check if client_s is muted in the recieving clients muted clients list
     // first you have to find the branch of the server the client is in right now (aka which group)
-
-    clientNode_t *curr = head; // retrieve the start of the server's linked list
-    while (curr != NULL)
+    printf("getting which group_s\n");
+    char *groupName_s = whichGroup(client_s, true, false, NULL);
+    printf("got a group\n");
+    char *groupName_r = malloc(MAX_GROUP_NAME);
+    strcpy(groupName_r, "N/A");
+    if (sayTo)
     {
-        if (curr->client->clientSocketFD != client_s->clientSocketFD) // dont send message to the sending client
+        char *tmp = whichGroup(NULL, true, true, client_r);
+        if (!tmp)
         {
-            if (!sayTo && !isMuted(curr->client, client_s->client_name, true))
-            { // first check if it is broadcast or dm. Also check if client_s is muted for currClient
-                printf("\n%s is being sent a message from %s\n", curr->client->client_name, client_s->client_name);
-                snprintf(DMmessage, 64, "<Group Message message from ~%s>\n", client_s->client_name);
-                strcat(DMmessage, msgBroadcast);
-                send(curr->client->clientSocketFD, DMmessage, strlen(DMmessage), 0);
-            }
-            else if (sayTo)
+            pthread_rwlock_unlock(&rwlock);
+            free(groupName_r);
+            free(groupName_s);
+            free(serverResponse);
+            free(tmp);
+            return NULL;
+        }
+        strcpy(groupName_r, tmp);
+        free(tmp);
+    }
+
+    printf("groupName_s: %s, groupname_r: %s\n", groupName_s, groupName_r);
+
+    if ((strcmp(groupName_r, groupName_s) != 0) && sayTo)
+    {
+        printf("message not sent because sender and recipient are not in the same group\n");
+        pthread_rwlock_unlock(&rwlock);
+        free(groupName_r);
+        free(groupName_s);
+        free(serverResponse);
+        return NULL;
+    }
+
+    if (groupName_s != NULL)
+    {
+        clientNode_t *curr = getFirstClientByGroupName(groupName_s, true); // retrieve the start of the server's linked list
+        while (curr != NULL)
+        {
+            if (curr->client->clientSocketFD != client_s->clientSocketFD) // dont send message to the sending client
             {
-                // finding address of client_r
-                recipientClientStruct = inServerList(NULL, true, true, client_r);
-                if (recipientClientStruct != NULL)
+                if (!sayTo && !isMuted(curr->client, client_s->client_name, true))
+                { // first check if it is broadcast or dm. Also check if client_s is muted for currClient
+                    printf("\n%s is being sent a message from %s\n", curr->client->client_name, client_s->client_name);
+                    snprintf(DMmessage, 64, "<Group Message message from ~%s>\n", client_s->client_name);
+                    strcat(DMmessage, msgBroadcast);
+                    send(curr->client->clientSocketFD, DMmessage, strlen(DMmessage), 0);
+                }
+                else if (sayTo)
                 {
-                    if ((strcmp(curr->client->client_name, client_r)) == 0 && (!isMuted(recipientClientStruct, client_s->client_name, true)))
+                    // finding address of client_r
+                    recipientClientStruct = inServerTree(NULL, true, true, client_r);
+                    if (recipientClientStruct != NULL)
                     {
-                        printf("\n%s is sending an exclusive message to %s\n\n", client_s->client_name, client_r);
-                        snprintf(DMmessage, 64, "<dm message from ~%s>\n", client_s->client_name);
-                        strcat(DMmessage, msgBroadcast);
-                        send(curr->client->clientSocketFD, DMmessage, strlen(DMmessage), 0);
+                        if ((strcmp(curr->client->client_name, client_r)) == 0 && (!isMuted(recipientClientStruct, client_s->client_name, true)))
+                        {
+                            printf("\n%s is sending an exclusive message to %s\n\n", client_s->client_name, client_r);
+                            snprintf(DMmessage, 64, "<dm message from ~%s>\n", client_s->client_name);
+                            strcat(DMmessage, msgBroadcast);
+                            send(curr->client->clientSocketFD, DMmessage, strlen(DMmessage), 0);
+                        }
                     }
                 }
             }
+            curr = curr->next;
         }
-        curr = curr->next;
+        pthread_rwlock_unlock(&rwlock);
+        if (sayTo)
+        {
+            snprintf(serverResponse, BUFFER_SIZE, "\nSERVER >> broadcasted message to %s...\n\n", client_r);
+        }
+        else
+        {
+            strcpy(serverResponse, "\nSERVER >> broadcasted message to connected clients...\n\n");
+        }
     }
-    pthread_rwlock_unlock(&rwlock);
-    char *serverResponse = malloc(BUFFER_SIZE);
-    if (sayTo)
-    {
-        snprintf(serverResponse, BUFFER_SIZE, "\nSERVER >> broadcasted message to %s...\n\n", client_r);
-    }
-    else
-    {
-        strcpy(serverResponse, "\nSERVER >> broadcasted message to connected clients...\n\n");
-    }
+    free(groupName_r);
+    free(groupName_s);
     return serverResponse;
 }
 
-// CONCURRENCY CHECKED
 char *muteClient(client_t *client, char *nameOfClientToBeMuted)
 {
     int i = 0;
     // get rd lock for validation checks
     pthread_rwlock_rdlock(&rwlock);
-
+    char *currentClientGroup = whichGroup(client, true, false, NULL);
     char *buffer = malloc(BUFFER_SIZE);
     bool alreadyPresent = false;
-    if (inServerList(NULL, true, true, nameOfClientToBeMuted) != NULL)
+    if (inServerTree(NULL, true, true, nameOfClientToBeMuted) != NULL && inGroupList(NULL, true, true, nameOfClientToBeMuted, currentClientGroup) != NULL)
     {
         while (client->muted_clients[i] != NULL && i < MAX_CONN_CLIENTS)
         {
@@ -634,18 +713,19 @@ char *muteClient(client_t *client, char *nameOfClientToBeMuted)
             snprintf(buffer, BUFFER_SIZE, "\nyou have muted: %s\nentry at location %d of your muted clients list\n\n", nameOfClientToBeMuted, i);
 
             pthread_rwlock_unlock(&rwlock); // unlock writer lock
+            free(currentClientGroup);
             return buffer;
         }
     }
     else
     {
-        strcpy(buffer, "\nSERVER >> The Client That You Want To Mute Does Not Exist\n\n");
+        strcpy(buffer, "\nSERVER >> The Client That You Want To Mute Does Not Exist or is not in your group\n\n");
     }
     pthread_rwlock_unlock(&rwlock);
+    free(currentClientGroup);
     return buffer;
 }
 
-// CONCURRENCY CHECKED
 char *unmuteClient(client_t *client, char *nameOfClientToBeUnmuted)
 {
     int i = 0;
@@ -686,14 +766,13 @@ char *unmuteClient(client_t *client, char *nameOfClientToBeUnmuted)
     return buffer;
 }
 
-// CONCURRENCY CHECKED
 char *renameClient(client_t *client, char *newName)
 {
     pthread_rwlock_wrlock(&rwlock);
     char *buffer = malloc(BUFFER_SIZE);
-    if (inServerList(NULL, true, true, newName) == NULL)
+    if (inServerTree(NULL, true, true, newName) == NULL)
     {
-        if (sizeof(newName) <= MAX_CLIENT_NAME)
+        if (sizeof(newName) < MAX_CLIENT_NAME)
         {
             strcpy(client->client_name, newName);
             snprintf(buffer, BUFFER_SIZE, "\nSERVER >> changed your name on the server to: %s\n\n", newName);
@@ -714,7 +793,7 @@ char *renameClient(client_t *client, char *newName)
 char *kickClient(client_t *client, char *nameOfClientToBeKicked)
 {
     char *buffer = malloc(BUFFER_SIZE);
-    client_t *clientToBeKicked = inServerList(NULL, false, true, nameOfClientToBeKicked);
+    client_t *clientToBeKicked = inServerTree(NULL, false, true, nameOfClientToBeKicked);
     if (ntohs(client->clientAddress.sin_port) == ADMIN_PORT_NUMBER)
     {
         if (clientToBeKicked != NULL)
@@ -734,13 +813,15 @@ char *kickClient(client_t *client, char *nameOfClientToBeKicked)
     return buffer;
 }
 
-char *listMembers()
+char *listMembers(char *groupName)
 {
     pthread_rwlock_rdlock(&rwlock);
     size_t bufferlen;
-    clientNode_t *curr = head;
+    clientNode_t *curr = getFirstClientByGroupName(groupName, true);
     char *buffer = malloc(BUFFER_SIZE);
     strcpy(buffer, "8#");
+    bufferlen = strlen(buffer);
+    snprintf(buffer + bufferlen, BUFFER_SIZE - bufferlen, "Group: %s\n", groupName);
     while (curr != NULL)
     {
         bufferlen = strlen(buffer);
@@ -753,7 +834,109 @@ char *listMembers()
     return buffer;
 }
 
-// CONCURRENCY CHECKED
+char *listGroups()
+{
+    pthread_rwlock_rdlock(&rwlock);
+    size_t bufferlen;
+    groupNode_t *g = top;
+    char *buffer = malloc(BUFFER_SIZE);
+    strcpy(buffer, "8#");
+    bufferlen = strlen(buffer);
+    snprintf(buffer + bufferlen, BUFFER_SIZE - bufferlen, "Open Groups:\n");
+    while (g != NULL)
+    {
+        bufferlen = strlen(buffer);
+        if (BUFFER_SIZE - bufferlen <= 1)
+            break;
+
+        snprintf(buffer + bufferlen, BUFFER_SIZE - bufferlen, "%s\n", g->groupName);
+        g = g->nextGroup;
+    }
+
+    pthread_rwlock_unlock(&rwlock);
+    return buffer;
+}
+
+char *createGroup(const char *name)
+{
+    char *buf = malloc(BUFFER_SIZE);
+
+    if (!name || name[0] == '\0')
+    {
+        strcpy(buf, "SERVER >> Missing group name (creategroup$ <name>)\n");
+        return buf;
+    }
+
+    pthread_rwlock_wrlock(&rwlock);
+
+    // reject duplicate
+    for (groupNode_t *g = top; g; g = g->nextGroup)
+    {
+        if (strcmp(g->groupName, name) == 0)
+        {
+            pthread_rwlock_unlock(&rwlock);
+            snprintf(buf, BUFFER_SIZE, "SERVER >> Group '%s' already exists\n", name);
+            return buf;
+        }
+    }
+
+    groupNode_t *ng = malloc(sizeof(groupNode_t));
+    strncpy(ng->groupName, name, MAX_GROUP_NAME - 1);
+    ng->groupName[MAX_GROUP_NAME - 1] = '\0';
+    ng->firstClient = NULL; // ✅ critical
+    ng->nextGroup = top;    // (push front)
+    top = ng;
+
+    pthread_rwlock_unlock(&rwlock);
+
+    snprintf(buf, BUFFER_SIZE, "SERVER >> Created group '%s'\n", name);
+    return buf;
+}
+
+char *joinGroup(client_t *client, const char *groupName)
+{
+    char *buf = malloc(BUFFER_SIZE);
+
+    if (!groupName || groupName[0] == '\0')
+    {
+        strcpy(buf, "SERVER >> Missing group name (joingroup$ <name>)\n");
+        return buf;
+    }
+
+    pthread_rwlock_wrlock(&rwlock);
+
+    groupNode_t *target = NULL;
+    for (groupNode_t *g = top; g; g = g->nextGroup)
+    {
+        if (strcmp(g->groupName, groupName) == 0)
+        {
+            target = g;
+            break;
+        }
+    }
+
+    if (!target)
+    {
+        pthread_rwlock_unlock(&rwlock);
+        snprintf(buf, BUFFER_SIZE, "SERVER >> Group '%s' does not exist\n", groupName);
+        return buf;
+    }
+
+    // remove from current group (if in any)
+    freeClientNodeFromTree(client, true);
+
+    // add to target group
+    clientNode_t *node = malloc(sizeof(clientNode_t));
+    node->client = client;
+    node->next = target->firstClient;
+    target->firstClient = node;
+
+    pthread_rwlock_unlock(&rwlock);
+
+    snprintf(buf, BUFFER_SIZE, "SERVER >> Joined group '%s'\n", groupName);
+    return buf;
+}
+
 bool freeClientNodeFromLL(client_t *rmClient, bool haswrlock)
 {
     // Phase 1: Read lock to find the client
@@ -829,7 +1012,45 @@ bool freeClientNodeFromLL(client_t *rmClient, bool haswrlock)
     return still_connected;
 }
 
-// CONCURRENCY CHECKED
+bool freeClientNodeFromTree(client_t *rmClient, bool haswrlock)
+{
+    if (!rmClient)
+        return false;
+
+    if (!haswrlock)
+        pthread_rwlock_wrlock(&rwlock);
+
+    for (groupNode_t *g = top; g; g = g->nextGroup)
+    {
+        clientNode_t *prev = NULL;
+        clientNode_t *curr = g->firstClient;
+
+        while (curr)
+        {
+            if (curr->client == rmClient)
+            {
+                if (prev)
+                    prev->next = curr->next;
+                else
+                    g->firstClient = curr->next;
+
+                free(curr);
+
+                if (!haswrlock)
+                    pthread_rwlock_unlock(&rwlock);
+                return true;
+            }
+
+            prev = curr;
+            curr = curr->next;
+        }
+    }
+
+    if (!haswrlock)
+        pthread_rwlock_unlock(&rwlock);
+    return false;
+}
+
 void freeListOfMutedClients(client_t *client, bool haswrlock)
 {
     if (!haswrlock)
@@ -843,167 +1064,6 @@ void freeListOfMutedClients(client_t *client, bool haswrlock)
         pthread_rwlock_unlock(&rwlock);
 }
 
-void *streamUserInput(void *clientSocketFD)
-{
-    threadArgs_t *args = (threadArgs_t *)clientSocketFD;
-    char buffer[MAX_LEN - 5] = {0};
-    int inputLen = 0;
-    int x, y;
-    getmaxyx(args->inputWindow, y, x);
-    strcpy(buffer, "starting input stream");
-    printToWindow(args->debugWindow, buffer);
-    wrefresh(args->inputWindow);
-    char client_request[BUFFER_SIZE];
-    while (running)
-    {
-        renderOutput(args->outputWindow);
-
-        werase(args->inputWindow);
-        box(args->inputWindow, 0, 0);
-        mvwprintw(args->inputWindow, 1, 1, " Input (F10 to quit) ");
-        mvwprintw(args->inputWindow, y / 2, 1, "> %s", buffer);
-        wmove(args->inputWindow, y / 2, 3 + inputLen);
-        wrefresh(args->inputWindow);
-
-        // get next char
-        int ch = wgetch(args->inputWindow);
-
-        if (ch == ERR)
-        {
-            // timeout expired to allow server updates
-            continue;
-        }
-        else if (ch == KEY_UP)
-        {
-            pthread_mutex_lock(&guiLock);
-            int visible, w;
-            getmaxyx(args->outputWindow, visible, w);
-            int maxScroll = msg_count - visible;
-            if (maxScroll < 0)
-                maxScroll = 0;
-            if (scrollOffset < maxScroll)
-                scrollOffset++;
-            pthread_mutex_unlock(&guiLock);
-        }
-        else if (ch == KEY_DOWN)
-        {
-            pthread_mutex_lock(&guiLock);
-            if (scrollOffset > 0)
-            {
-                scrollOffset--;
-            }
-            pthread_mutex_unlock(&guiLock);
-        }
-        else if (ch == '\n')
-        {
-            if (inputLen > 0)
-            {
-                char line[MAX_LEN];
-                if (strcmp(line, "exit"))
-                {
-                    exit(0);
-                }
-                ssize_t amount_sent = send(args->sd, line, strlen(line), 0);
-                if (amount_sent < 0)
-                {
-                    char error[15];
-                    snprintf(error, 15, "Send Failed");
-                    running = 0;
-                    break;
-                }
-
-                // add message to outut message buffer
-                snprintf(line, MAX_LEN, "you: %s", buffer);
-                addMessage(line);
-
-                // reset input buffer
-                int bufferlen = strlen(buffer);
-                for (int i = 0; i < bufferlen; i++)
-                {
-                    buffer[i] = '\0';
-                }
-                inputLen = 0;
-                // jump back to the bottom
-                pthread_mutex_lock(&guiLock);
-                scrollOffset = 0;
-                pthread_mutex_unlock(&guiLock);
-            }
-        }
-        else if (isprint(ch))
-        {
-            if (inputLen < MAX_LEN - 1)
-            {
-                buffer[inputLen++] = ch;
-                buffer[inputLen] = '\0';
-            }
-        }
-
-        if (fgets(client_request, BUFFER_SIZE, stdin) == NULL)
-        {
-            perror("fgets failed");
-            exit(1);
-        }
-        /// Remove newclient_request (enter)
-        client_request[strlen(client_request) - 1] = '\0';
-
-        if (strcmp(client_request, "exit") == 0)
-        {
-            running = 0;
-            exit(0);
-        }
-        if (running)
-        {
-            ssize_t amount_sent = send(args->sd, client_request, strlen(client_request), 0);
-            if (amount_sent < 0)
-            {
-                perror("send failed");
-                running = 0;
-                break;
-            }
-        }
-    }
-    return NULL;
-}
-
-void *streamServerOutput(void *clientSocketFD)
-{
-    threadArgs_t *args = (threadArgs_t *)clientSocketFD;
-    char buffer[BUFFER_SIZE];
-    strcpy(buffer, "starting output stream");
-    printToWindow(args->debugWindow, buffer);
-    wrefresh(args->inputWindow);
-    char serverResponse[MAX_SERVER_RESPONSE];
-    while (running)
-    {
-        int readResult = recv(args->sd, serverResponse, MAX_SERVER_RESPONSE, 0);
-        if (readResult > 0)
-        {
-            strcpy(buffer, "adding message to queue");
-            printToWindow(args->debugWindow, buffer);
-            serverResponse[readResult] = '\0';
-            addMessage(serverResponse);
-        }
-        else if (readResult == 0)
-        {
-            strcpy(buffer, "Connection Closed by Peer");
-            printToWindow(args->debugWindow, buffer);
-            close(args->sd);
-            running = 0;
-            break;
-        }
-        else
-        {
-            strcpy(buffer, "Recv Failed");
-            printToWindow(args->debugWindow, buffer);
-            close(args->sd);
-            running = 0;
-            break;
-        }
-    }
-    return NULL;
-}
-
-// CONCURRENCY CHECKED
 bool isMuted(client_t *client, char *name, bool hasLock)
 {
     if (!hasLock)
@@ -1033,26 +1093,53 @@ bool isMuted(client_t *client, char *name, bool hasLock)
     return false;
 }
 
-// CONCURRENCY CHECKED
-void printServerLL()
+void printServerTree()
 {
     pthread_rwlock_rdlock(&rwlock);
-    clientNode_t *curr = head;
-    char IPaddr[INET_ADDRSTRLEN];
-    int i = 0;
-    while (curr != NULL)
+
+    printf("\n========== SERVER TREE ==========\n");
+
+    groupNode_t *g = top;
+    if (g == NULL)
     {
-        inet_ntop(AF_INET, &curr->client->clientAddress.sin_addr, IPaddr, INET_ADDRSTRLEN);
-        printf("--> |");
-        printf("IP: %s, Port: %u, Name: %s", IPaddr, ntohs(curr->client->clientAddress.sin_port), curr->client->client_name);
-        printf("|\n");
-        curr = curr->next;
+        printf("(server tree is empty)\n");
     }
-    printf("--> NULL\n");
+
+    while (g != NULL)
+    {
+        printf("Group: %s\n", g->groupName);
+
+        clientNode_t *c = g->firstClient;
+        if (c == NULL)
+        {
+            printf("  (no clients)\n");
+        }
+
+        while (c != NULL)
+        {
+            char ip[INET_ADDRSTRLEN];
+            inet_ntop(AF_INET,
+                      &c->client->clientAddress.sin_addr,
+                      ip,
+                      INET_ADDRSTRLEN);
+
+            printf("  |- Client: %-12s (FD: %d, %s:%u)\n",
+                   c->client->client_name,
+                   c->client->clientSocketFD,
+                   ip,
+                   ntohs(c->client->clientAddress.sin_port));
+
+            c = c->next;
+        }
+
+        printf("\n");
+        g = g->nextGroup;
+    }
+
+    printf("=================================\n");
     pthread_rwlock_unlock(&rwlock);
 }
 
-// CONCURRENCY CHECKED
 void printClientMuted(client_t *client)
 {
     pthread_rwlock_rdlock(&rwlock);
@@ -1077,13 +1164,12 @@ void printClientMuted(client_t *client)
     pthread_rwlock_unlock(&rwlock);
 }
 
-// CONCURRENCY CHECKED
-client_t *inServerList(client_t *client, bool hasLock, bool byClientName, char *name)
+client_t *inGroupList(client_t *client, bool hasLock, bool byClientName, char *name, char *groupName)
 {
     if (!hasLock)
         pthread_rwlock_rdlock(&rwlock);
 
-    clientNode_t *curr = head;
+    clientNode_t *curr = getFirstClientByGroupName(groupName, true);
     while (curr != NULL)
     {
         if (byClientName && (strcmp(curr->client->client_name, name) == 0))
@@ -1107,7 +1193,105 @@ client_t *inServerList(client_t *client, bool hasLock, bool byClientName, char *
     return NULL;
 }
 
-// CONCURRENCY IMPLEMENTED
+client_t *inServerTree(client_t *client, bool hasLock, bool byClientName, char *name)
+{
+    if (!hasLock)
+        pthread_rwlock_rdlock(&rwlock);
+    groupNode_t *g = top;
+    clientNode_t *c = NULL;
+    while (g != NULL)
+    {
+        c = g->firstClient;
+        while (c != NULL)
+        {
+            if (byClientName)
+            {
+                if (strcmp(c->client->client_name, name) == 0)
+                {
+                    if (!hasLock)
+                        pthread_rwlock_unlock(&rwlock);
+                    return c->client;
+                }
+            }
+            else if (c->client->clientSocketFD == client->clientSocketFD)
+            {
+                if (!hasLock)
+                    pthread_rwlock_unlock(&rwlock);
+                return c->client;
+            }
+            c = c->next;
+        }
+        g = g->nextGroup;
+    }
+    if (!hasLock)
+        pthread_rwlock_unlock(&rwlock);
+    return NULL;
+}
+
+char *whichGroup(client_t *client, bool hasLock, bool byClientName, char *name)
+{
+    printf("entering whichgroup");
+    if (!hasLock)
+        pthread_rwlock_rdlock(&rwlock);
+    groupNode_t *g = top;
+    clientNode_t *c = NULL;
+    char *buffer = malloc(MAX_GROUP_NAME);
+    while (g != NULL)
+    {
+        c = g->firstClient;
+        while (c != NULL)
+        {
+            if (byClientName)
+            {
+                printf("by client name\n");
+                if (strcmp(c->client->client_name, name) == 0)
+                {
+                    printf("client with same name was found: %d\n", c->client->clientSocketFD);
+                    if (!hasLock)
+                        pthread_rwlock_unlock(&rwlock);
+                    strcpy(buffer, g->groupName);
+                    return buffer;
+                }
+            }
+            else if (c->client->clientSocketFD == client->clientSocketFD)
+            {
+                printf("client was found by comparing socketFD: %d\n", c->client->clientSocketFD);
+                if (!hasLock)
+                    pthread_rwlock_unlock(&rwlock);
+                strcpy(buffer, g->groupName);
+                return buffer;
+            }
+            c = c->next;
+        }
+        g = g->nextGroup;
+    }
+    if (!hasLock)
+        pthread_rwlock_unlock(&rwlock);
+    printf("client was not found in server tree\n");
+    free(buffer);
+    return NULL;
+}
+
+clientNode_t *getFirstClientByGroupName(char *groupname, bool hasLock)
+{
+    if (!hasLock)
+        pthread_rwlock_rdlock(&rwlock);
+    groupNode_t *g = top;
+    while (g != NULL)
+    {
+        if (strcmp(g->groupName, groupname) == 0)
+        {
+            if (!hasLock)
+                pthread_rwlock_unlock(&rwlock);
+            return g->firstClient;
+        }
+        g = g->nextGroup;
+    }
+    if (!hasLock)
+        pthread_rwlock_unlock(&rwlock);
+    return NULL;
+}
+
 void printToWindow(WINDOW *win, char *buffer)
 {
     pthread_mutex_lock(&guiLock);
@@ -1148,60 +1332,4 @@ void printToWindow(WINDOW *win, char *buffer)
     }
     wrefresh(win);
     pthread_mutex_unlock(&guiLock);
-}
-
-// add message to message buffer with concurrency implemented
-void addMessage(const char *text)
-{
-    pthread_mutex_lock(&guiLock);
-
-    if (msg_count < MAX_MESSAGES)
-    {
-        strncpy(messages[msg_count], text, MAX_LEN - 1);
-        messages[msg_count][MAX_LEN - 1] = '\0';
-        msg_count++;
-    }
-    else
-    {
-        for (int i = 1; i < MAX_MESSAGES; i++)
-        {
-            strcpy(messages[i - 1], messages[i]);
-        }
-        strncpy(messages[MAX_MESSAGES - 1], text, MAX_LEN - 1);
-        messages[MAX_MESSAGES - 1][MAX_LEN - 1] = '\0';
-    }
-    pthread_mutex_unlock(&guiLock);
-}
-
-void renderOutput(WINDOW *outputWin)
-{
-    int height, width;
-    getmaxyx(outputWin, height, width);
-
-    int visible = height; // since we are inside the outputContext (scrollable)
-
-    werase(outputWin);
-
-    pthread_mutex_lock(&guiLock);
-
-    int maxScroll = msg_count - visible;
-    if (maxScroll < 0)
-        maxScroll = 0;
-    if (scrollOffset > maxScroll)
-        scrollOffset = maxScroll;
-    if (scrollOffset < 0)
-        scrollOffset = 0;
-
-    int start = msg_count - visible - scrollOffset;
-    if (start < 0)
-        start = 0;
-
-    int row = 0;
-    for (int i = start; i < msg_count && row < height - 1; i++, row++)
-    {
-        printToWindow(outputWin, messages[i]);
-    }
-
-    pthread_mutex_unlock(&guiLock);
-    wrefresh(outputWin);
 }

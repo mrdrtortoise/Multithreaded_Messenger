@@ -5,13 +5,10 @@
 #define INPUT_X_MULTIPLIER 0.75
 #define DEBUG_Y_DIVIDER 2
 
-// Global mutex for thread-safe ncurses operations
 pthread_mutex_t ncurses_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-// External declaration for the running flag from utils.c
 extern volatile sig_atomic_t running;
 
-// Thread-safe function to print to a window
 void safe_wprintw(WINDOW *win, const char *message)
 {
     pthread_mutex_lock(&ncurses_mutex);
@@ -20,38 +17,26 @@ void safe_wprintw(WINDOW *win, const char *message)
     pthread_mutex_unlock(&ncurses_mutex);
 }
 
-// Thread-safe function to clear and refresh input area
+// refresh input area
 void safe_refresh_input(WINDOW *input_win, const char *prompt, const char *current_input)
 {
     pthread_mutex_lock(&ncurses_mutex);
 
-    // Get window dimensions for proper clearing
     int max_y, max_x;
     getmaxyx(input_win, max_y, max_x);
 
-    // Clear all lines in the input area (skip the border)
     for (int y = 1; y < max_y - 1; y++)
     {
         wmove(input_win, y, 1);
         wclrtoeol(input_win);
     }
 
-    // Redraw border
     box(input_win, 0, 0);
 
-    // Print title
     mvwprintw(input_win, 0, 1, "Input Window");
-
-    // Print prompt and current input on the input line
     mvwprintw(input_win, 1, 1, "%s%s", prompt, current_input);
-
-    // Clear everything after the printed text to remove any leftover characters
     wclrtoeol(input_win);
-
-    // Position cursor after the current input for next character
     wmove(input_win, 1, 1 + strlen(prompt) + strlen(current_input));
-
-    // Refresh the window
     wrefresh(input_win);
 
     pthread_mutex_unlock(&ncurses_mutex);
@@ -64,32 +49,35 @@ void *safe_streamUserInput(void *arguments)
     char input_buffer[BUFFER_SIZE] = "";
     int pos = 0;
     int ch;
+    int argc, parseResult;
+    char arg[BUFFER_SIZE], recClientName[MAX_CLIENT_NAME];
 
     safe_wprintw(args->debugWindow, "Input thread started\n");
-
-    // Initial display
     safe_refresh_input(args->inputWindow, "> ", input_buffer);
 
     while (running)
     {
-        // Get character input (non-blocking)
         pthread_mutex_lock(&ncurses_mutex);
         wtimeout(args->inputWindow, 100); // Wait up to 100ms for input
         ch = wgetch(args->inputWindow);
         pthread_mutex_unlock(&ncurses_mutex);
 
         if (ch != ERR)
-        { // We got a character
+        {
             if (ch == '\n' || ch == '\r')
             {
                 // Send message
                 input_buffer[pos] = '\0';
                 if (pos > 0)
                 {
-                    // Debug: show what we're sending
                     char debug_msg[BUFFER_SIZE + 50];
-                    snprintf(debug_msg, sizeof(debug_msg), "Sending: '%s' (length: %d)\n", input_buffer, pos);
-                    safe_wprintw(args->debugWindow, debug_msg);
+                    if (strcmp(input_buffer, "exit") == 0)
+                    {
+                        endwin();
+                        exit(0);
+                    }
+                    // snprintf(debug_msg, sizeof(debug_msg), "Sending: '%s' (length: %d)\n", input_buffer, pos);
+                    // safe_wprintw(args->debugWindow, debug_msg);
                     ssize_t amount_sent = send(args->sd, input_buffer, strlen(input_buffer), 0);
                     if (amount_sent < 0)
                     {
@@ -98,19 +86,18 @@ void *safe_streamUserInput(void *arguments)
                     else
                     {
                         char sent_msg[BUFFER_SIZE + 10];
-                        snprintf(sent_msg, BUFFER_SIZE + 10, "You: %s\n", input_buffer);
+                        parseResult = parseClientRequest(&argc, arg, recClientName, input_buffer, false);
+                        if (parseResult == 1 || parseResult == 2)
+                        {
+                            snprintf(sent_msg, BUFFER_SIZE + 10, "You: %s\n", arg);
+                        }
                         safe_wprintw(args->outputWindow, sent_msg);
                     }
                 }
 
-                // Reset input buffer and display
                 memset(input_buffer, 0, sizeof(input_buffer));
                 pos = 0;
-                // Debug: show buffer was cleared
-                safe_wprintw(args->debugWindow, "Buffer cleared, pos reset to 0, buffer[0] = '\0'\n");
                 safe_refresh_input(args->inputWindow, "> ", input_buffer);
-                // Debug: confirm display was updated
-                safe_wprintw(args->debugWindow, "Display refreshed after clearing\n");
             }
             else if (ch == KEY_BACKSPACE || ch == 127 || ch == '\b')
             {
@@ -133,10 +120,6 @@ void *safe_streamUserInput(void *arguments)
                 // Regular printable character
                 input_buffer[pos] = ch;
                 pos++;
-                // Debug: show character input
-                char char_debug[10];
-                sprintf(char_debug, "Char: %c\n", ch);
-                safe_wprintw(args->debugWindow, char_debug);
                 safe_refresh_input(args->inputWindow, "> ", input_buffer);
             }
         }
@@ -148,7 +131,7 @@ void *safe_streamUserInput(void *arguments)
     return NULL;
 }
 
-// Thread-safe server output thread - handles incoming messages
+// Thread-safe server output thread
 void *safe_streamServerOutput(void *arguments)
 {
     threadArgs_t *args = (threadArgs_t *)arguments;
@@ -165,13 +148,14 @@ void *safe_streamServerOutput(void *arguments)
             serverResponse[readResult] = '\0';
             if (serverResponse[0] == '8' && serverResponse[1] == '#')
             {
-                // memmove(serverResponse, serverResponse + 2, strlen(serverResponse + 2));
+                // displayig to info win
                 for (i = 0; i < strlen(serverResponse) - 2; i++)
                 {
                     serverResponse[i] = serverResponse[i + 2];
                 }
                 serverResponse[i - 1] = '\n';
-                serverResponse[i] = '\0';
+                serverResponse[i] = '\n';
+                serverResponse[i + 1] = '\0';
                 safe_wprintw(args->infoWindow, serverResponse);
             }
             else
